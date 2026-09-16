@@ -113,7 +113,8 @@ export const PREFIX_NOISE = [
  * as 同时定位与建图.
  */
 export const BOUNDARY_SUSPECT_TOKENS = [
-  "提出", "采用", "一种", "本文", "可以", "能够", "将该", "在", "的", "把", "对",
+  "称为", "提出", "采用", "一种", "本文", "可以", "能够", "将该",
+  "在", "的", "把", "对", "是", "占",
 ].sort((a, b) => b.length - a.length);
 
 /** Index and token of the last suspect token inside the run, or null. */

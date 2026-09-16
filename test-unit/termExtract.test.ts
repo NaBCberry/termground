@@ -259,3 +259,79 @@ test("concatenated English keywords are dropped, not stored", () => {
     [["滚动窗口", "rolling window"]],
   );
 });
+
+test("section headings are not terms", () => {
+  const { candidates } = extractFromSegments(
+    [
+      { page: 8, section: "references", text: "参考文献（References）" },
+      { page: 1, section: "introduction", text: "引言（Introduction）" },
+    ],
+    new Set(),
+  );
+  assert.deepEqual(candidates, []);
+});
+
+test("glued English is rejected for author glosses too", () => {
+  // The text layer dropped the spaces; un-concatenating needs a dictionary.
+  assert.equal(isPlausiblePair("路径规划算法", "Pathplanningalgorithm"), false);
+  assert.equal(isPlausiblePair("多无人机", "unmannedaerialvehicles"), false);
+  // A short single word is still fine.
+  assert.equal(isPlausiblePair("导航", "Navigation"), true);
+});
+
+test("sentence fragments starting with a function word are not terms", () => {
+  const segments: Segment[] = [
+    {
+      page: 2,
+      section: "body",
+      text:
+        "算法的搜索效率取决于信息的搜索顺序，在求解过程中对搜索空间做剪枝，" +
+        "同时提高遗传算法的搜索能力并改善对搜索路径的评价方式。",
+    },
+  ];
+  const { candidates } = extractFromSegments(segments, new Set());
+  const unmapped = candidates
+    .filter((c) => c.method === "zh_np_frequency")
+    .map((c) => c.zh);
+  for (const fragment of ["的搜索", "在求解", "对搜索"]) {
+    assert.equal(unmapped.includes(fragment), false, fragment);
+  }
+});
+
+test("a copula in the middle is used to cut the head", () => {
+  // "作是车辆路径问题（VRP）" must yield 车辆路径问题.
+  const [term, certain] = refineZhBoundary("作是车辆路径问题", new Set());
+  assert.equal(term, "车辆路径问题");
+  assert.equal(certain, true);
+});
+
+test("glued English of 15 characters is already rejected", () => {
+  assert.equal(isPlausiblePair("路径分享", "pastpathsharing"), false);
+  assert.equal(isPlausiblePair("分流方程", "shuntingequation"), false);
+  // A 14-character single word still passes; 16 is where the rule bites.
+  assert.equal(isPlausiblePair("识别", "identification"), true);
+});
+
+test("grant numbers are not English terms", () => {
+  assert.equal(isPlausiblePair("启动基金资助项目", "KYS09150543"), false);
+});
+
+test("a glued token inside a longer phrase is rejected too", () => {
+  // "particle swarmoptimization": the second token is two words glued together.
+  assert.equal(
+    isPlausiblePair("最优和粒子群优化", "particle swarmoptimization"),
+    false,
+  );
+  assert.equal(
+    isPlausiblePair("平均任务完成时间", "average missioncompletiontime"),
+    false,
+  );
+  // Ordinary multi-word phrases are unaffected.
+  assert.equal(isPlausiblePair("导航", "gross domestic product"), true);
+});
+
+test("a 占 in the middle is used to cut the head", () => {
+  const [term, certain] = refineZhBoundary("本占国内生产总值", new Set());
+  assert.equal(term, "国内生产总值");
+  assert.equal(certain, true);
+});

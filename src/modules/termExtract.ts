@@ -119,6 +119,29 @@ const EN_STOPWORDS = new Set([
 /** "dist rib ut ed model predicti ve cont r ol" — the PDF broke every word. */
 const FRAGMENTED_LATIN = /\b[a-z]{1,2}\b(?=.*\b[a-z]{1,2}\b)/;
 
+/**
+ * Section headings get glossed exactly like terms in a Chinese paper
+ * ("参考文献（References）"), but nobody wants them in a term base.
+ */
+export const SECTION_WORDS = new Set([
+  "引言", "绪论", "结论", "结束语", "结论与展望", "参考文献", "摘要", "关键词",
+  "目录", "致谢", "附录", "作者简介", "基金项目", "收稿日期", "中图分类号",
+  "文献标识码", "文章编号", "通信作者",
+]);
+
+/**
+ * Above this length, English with no space or hyphen is almost certainly two
+ * words the text layer glued together ("Pathplanningalgorithm"). The cost is a
+ * rare long single word such as "electroencephalography" being dropped too.
+ */
+const CONCATENATED_EN_LENGTH = 14;
+
+/** Longest single English token we accept; beyond this two words were glued. */
+const MAX_EN_TOKEN_LENGTH = 14;
+
+/** Grant numbers and article ids sneak in as "English". */
+const DIGIT_RUN = /\d{4,}/;
+
 export function truncateAtMetadata(text: string): string {
   let cut = text.length;
   for (const marker of METADATA_MARKERS) {
@@ -145,6 +168,17 @@ export function isPlausiblePair(zh: string, en: string): boolean {
   if (EN_STOPWORDS.has(e.toLowerCase())) return false;
   if (FRAGMENTED_LATIN.test(e.toLowerCase())) return false;
   if (METADATA_MARKERS.some((marker) => e.includes(marker))) return false;
+  if (DIGIT_RUN.test(e)) return false;
+  if (!e.includes(" ") && !e.includes("-") && e.length > CONCATENATED_EN_LENGTH) {
+    return false;
+  }
+  if (
+    e
+      .split(/[\s-]+/)
+      .some((token) => token.length > MAX_EN_TOKEN_LENGTH)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -299,6 +333,10 @@ export function extractFromSegments(
         rejected++;
         continue;
       }
+      if (SECTION_WORDS.has(gloss.zh)) {
+        rejected++;
+        continue;
+      }
       const score =
         gloss.method === "author_note" ? (gloss.certain ? 0.95 : 0.6) : 0.9;
       candidates.push({
@@ -342,13 +380,6 @@ export function extractFromSegments(
       rejected++;
       continue;
     }
-    // A keyword whose spaces were stripped by the text layer arrives as one
-    // long run ("unmannedaerialvehicle"). It cannot be un-concatenated without
-    // a dictionary, so drop it instead of storing a wrong term.
-    if (!en.includes(" ") && !en.includes("-") && en.length > 18) {
-      rejected++;
-      continue;
-    }
     candidates.push({
       zh,
       en,
@@ -368,6 +399,9 @@ export function extractFromSegments(
     if (STOP_TERMS.has(candidate)) continue;
     if (DOMAIN_SUFFIXES.includes(candidate)) continue;
     if (knownZh.has(candidate)) continue;
+    // A candidate that still carries a leading function word is a fragment cut
+    // out of a sentence ("的搜索", "在求解"), not a term.
+    if (trimTermPrefix(candidate) !== candidate) continue;
     // Drop a candidate that is contained in a longer one with comparable
     // frequency: 定位 should not survive next to 定位精度.
     const shadowed = sorted.some(
