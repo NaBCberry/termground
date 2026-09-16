@@ -5,6 +5,7 @@ import {
   cleanSurface,
   joinLines,
   lemmaEn,
+  normalizeCjkSpacing,
   splitBlocks,
   splitPages,
   splitSentences,
@@ -78,5 +79,11 @@ test("splitBlocks breaks before a section heading", () => {
 
 test("trimTermPrefix strips leading verbs and connectives", () => {
   assert.equal(trimTermPrefix("本文提出一种结合超宽带"), "超宽带");
+});
+
+test("spaces between CJK glyphs are merged", () => {
+  // Real PDF text layers come out like this.
+  assert.equal(normalizeCjkSpacing("遍 历 路 径 规 划"), "遍历路径规划");
+  assert.equal(cleanSurface("覆 盖 路 径 规 划"), "覆盖路径规划");
 });
 

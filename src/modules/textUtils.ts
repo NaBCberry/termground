@@ -35,6 +35,15 @@ export function toHalfwidth(input: string): string {
   );
 }
 
+/**
+ * PDF text layers frequently put a space between every pair of CJK glyphs
+ * ("遍 历 路 径 规 划"). Left alone, that breaks both term matching and the
+ * stored evidence quotes.
+ */
+export function normalizeCjkSpacing(text: string): string {
+  return text.replace(/(?<=[\u4e00-\u9fff])[ \t]+(?=[\u4e00-\u9fff])/g, "");
+}
+
 const TRIM_CHARS = " \t\r\n,.;:\u3002\uFF0C\uFF1B\uFF1A\u3001\"'\u201C\u201D\u2018\u2019";
 
 /**
@@ -46,6 +55,7 @@ export function cleanSurface(input: string): string {
   let s = input.normalize("NFKC");
   s = s.replace(/\u3000/g, " ").trim();
   s = s.replace(/\s+/g, " ");
+  s = normalizeCjkSpacing(s);
   let start = 0;
   let end = s.length;
   while (start < end && TRIM_CHARS.includes(s[start])) start++;
