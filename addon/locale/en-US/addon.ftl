@@ -1,11 +1,15 @@
-startup-begin = Addon is loading
-startup-finish = Addon is ready
-menuitem-label = Addon Template: Helper Examples
-menupopup-label = Addon Template: Menupopup
-menuitem-submenulabel = Addon Template
-menuitem-filemenulabel = Addon Template: File Menuitem
-prefs-title = Template
-prefs-table-title = Title
-prefs-table-detail = Detail
-tabpanel-lib-tab-label = Lib Tab
-tabpanel-reader-tab-label = Reader Tab
+startup-finish = TermGround is ready
+
+menuitem-extract = Extract terms (TermGround)
+menuitem-stats = Term base statistics
+
+progress-no-selection = Select one or more items first
+progress-extract-begin = Extracting terms…
+progress-reading = Reading
+progress-extract-done = Done
+
+prefs-title = TermGround
+pref-enable = Enabled
+pref-base-path = Term base file:
+pref-help = { $name } v{ $version } · built at { $time }
+

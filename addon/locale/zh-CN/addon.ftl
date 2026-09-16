@@ -1,11 +1,15 @@
-startup-begin = 插件加载中
-startup-finish = 插件已就绪
-menuitem-label = 插件模板: 帮助工具样例
-menupopup-label = 插件模板: 弹出菜单
-menuitem-submenulabel = 插件模板：子菜单
-menuitem-filemenulabel = 插件模板: 文件菜单
-prefs-title = 插件模板
-prefs-table-title = 标题
-prefs-table-detail = 详情
-tabpanel-lib-tab-label = 库标签
-tabpanel-reader-tab-label = 阅读器标签
+startup-finish = TermGround 已就绪
+
+menuitem-extract = 提取术语（TermGround）
+menuitem-stats = 术语库统计
+
+progress-no-selection = 请先选中文献条目
+progress-extract-begin = 正在提取术语…
+progress-reading = 正在读取
+progress-extract-done = 提取完成
+
+prefs-title = TermGround
+pref-enable = 启用
+pref-base-path = 术语库文件：
+pref-help = { $name } v{ $version } · 构建于 { $time }
+
