@@ -1,5 +1,9 @@
 {
   "extends": "zotero-types/entries/sandbox/",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
   "include": ["src", "typings"],
   "exclude": ["build", "addon"]
 }
