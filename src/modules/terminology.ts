@@ -9,10 +9,27 @@ import { getString } from "../utils/locale";
 import { growFromItems } from "./termPipeline.ts";
 import { TermStore } from "./termStore.ts";
 
+/** Only one extraction at a time; repeated clicks would otherwise pile up. */
+let running = false;
+
+function popup(closeTime: number) {
+  return new ztoolkit.ProgressWindow(addon.data.config.addonName, {
+    closeOnClick: true,
+    closeTime,
+    // Without this, repeated clicks stack popups on top of each other and the
+    // user cannot tell which one is current.
+    closeOtherProgressWindows: true,
+  });
+}
+
 function notify(text: string, type: "default" | "success" | "fail" = "default") {
-  new ztoolkit.ProgressWindow(addon.data.config.addonName, { closeTime: 5000 })
-    .createLine({ text, type, progress: 100 })
-    .show();
+  popup(6000).createLine({ text, type, progress: 100 }).show();
+}
+
+/** Keep popup text on one screen line; the full error goes to the debug log. */
+function shortError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > 90 ? `${message.slice(0, 90)}…` : message;
 }
 
 function selectedItems(): Zotero.Item[] {
@@ -43,18 +60,22 @@ export function registerMenus(): void {
 }
 
 export async function extractSelectedItems(): Promise<void> {
+  if (running) {
+    notify(getString("progress-already-running"));
+    return;
+  }
+
   const items = selectedItems();
   if (!items.length) {
     notify(getString("progress-no-selection"));
     return;
   }
 
-  const progress = new ztoolkit.ProgressWindow(addon.data.config.addonName, {
-    closeTime: -1,
-  })
+  const progress = popup(-1)
     .createLine({ text: getString("progress-extract-begin"), progress: 0 })
     .show();
 
+  running = true;
   try {
     const store = await TermStore.load();
     const report = await growFromItems(items, store, (title) => {
@@ -70,13 +91,14 @@ export async function extractSelectedItems(): Promise<void> {
     ztoolkit.log("termground extract report", report);
   } catch (error) {
     progress.changeLine({
-      text: `提取失败：${error}`,
+      text: `提取失败：${shortError(error)}`,
       progress: 100,
       type: "fail",
     });
     progress.startCloseTimer(10000);
     ztoolkit.log("termground extract failed", error);
-    throw error;
+  } finally {
+    running = false;
   }
 }
 

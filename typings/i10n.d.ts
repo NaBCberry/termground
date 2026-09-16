@@ -17,6 +17,7 @@ export type FluentMessageId =
   | 'pref-input'
   | 'pref-title'
   | 'prefs-title'
+  | 'progress-already-running'
   | 'progress-extract-begin'
   | 'progress-extract-done'
   | 'progress-no-selection'
