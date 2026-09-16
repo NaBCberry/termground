@@ -154,7 +154,11 @@ export async function extractSelectedItems(): Promise<void> {
       type: "fail",
     });
     progress.startCloseTimer(10000);
-    ztoolkit.log("termground extract failed", error);
+    // An Error object serialises to {} in the debug log, which is exactly
+    // useless when the failure is the thing you need to read. Log the message.
+    const detail =
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    ztoolkit.log(`termground extract failed: ${detail}`, error);
   } finally {
     running = false;
   }
