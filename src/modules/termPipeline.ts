@@ -14,7 +14,7 @@ import {
 } from "./textUtils.ts";
 import {
   extractFromSegments,
-  selectPromotable,
+  splitCandidates,
   type Segment,
 } from "./termExtract.ts";
 import { TermStore } from "./termStore.ts";
@@ -27,6 +27,9 @@ export interface ExtractReport {
   candidates: number;
   pairsAdded: number;
   evidenceAdded: number;
+  pendingAdded: number;
+  /** Candidates thrown away as unusable; reported so the loss is visible. */
+  rejected: number;
   skipped: string[];
 }
 
@@ -104,6 +107,8 @@ export async function growFromItems(
     candidates: 0,
     pairsAdded: 0,
     evidenceAdded: 0,
+    pendingAdded: 0,
+    rejected: 0,
     skipped: [],
   };
 
@@ -130,21 +135,30 @@ export async function growFromItems(
 
     const segments = segmentsFromText(fullText.text);
     const { candidates, stats } = extractFromSegments(segments, known);
-    const promotable = selectPromotable(candidates);
+    const { promotable, pending } = splitCandidates(candidates);
 
     const itemKey = String(parent?.key ?? attachment.key);
+    const itemTitle = String(label || "");
     let added = 0;
     const evidenceBefore = store.data.evidence.length;
     for (const candidate of promotable) {
       if (store.addCandidate(candidate, { itemKey })) added++;
     }
     report.evidenceAdded += store.data.evidence.length - evidenceBefore;
+    for (const candidate of pending) {
+      if (
+        store.addPending(candidate, { itemKey, itemTitle }) === "new"
+      ) {
+        report.pendingAdded++;
+      }
+    }
 
     report.attachments++;
     report.pages += fullText.extractedPages || 0;
     report.segments += stats.segments;
     report.candidates += candidates.length;
     report.pairsAdded += added;
+    report.rejected += stats.rejected;
 
     // Terms learned from this paper should inform the next one's boundaries.
     for (const pair of store.data.pairs) known.add(pair.zh);
@@ -152,7 +166,7 @@ export async function growFromItems(
     store.recordItem({
       itemKey,
       libraryID: attachment.libraryID,
-      title: String(label || ""),
+      title: itemTitle,
       pages: fullText.extractedPages || 0,
       candidates: candidates.length,
       pairs: added,
