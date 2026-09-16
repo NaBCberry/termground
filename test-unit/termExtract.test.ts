@@ -5,8 +5,10 @@ import {
   extractFromSegments,
   findAuthorNotes,
   findEnglishFirstNotes,
+  isPlausiblePair,
   refineZhBoundary,
   selectPromotable,
+  truncateAtMetadata,
   type Segment,
 } from "../src/modules/termExtract.ts";
 
@@ -170,5 +172,90 @@ test("known terms are not reported as unmapped candidates", () => {
   assert.equal(
     candidates.filter((c) => c.method === "zh_np_frequency").length,
     0,
+  );
+});
+
+// The cases below all come from a real run over 21 Chinese journal papers.
+
+test("keyword lines are cut at journal boilerplate", () => {
+  const raw =
+    "路径规划中图分类号: V279 文献标志码: A 文章编号: 1000-1093 收稿日期: 2025-06-19";
+  assert.equal(truncateAtMetadata(raw), "路径规划");
+
+  const { candidates } = extractFromSegments(
+    [
+      { page: 1, section: "keywords_zh", text: `关键词：${raw}` },
+      {
+        page: 1,
+        section: "keywords_en",
+        text: "Keywords: path planning; route planning",
+      },
+    ],
+    new Set(),
+  );
+  const pairs = candidates.filter((c) => c.method === "bilingual_keyword");
+  assert.deepEqual(
+    pairs.map((c) => [c.zh, c.en]),
+    [["路径规划", "path planning"]],
+  );
+});
+
+test("spaces between CJK glyphs are removed from the stored quote", () => {
+  const { candidates } = extractFromSegments(
+    [
+      {
+        page: 2,
+        section: "body",
+        text: "采 用 覆 盖 路 径 规 划（Coverage Path Planning, CPP）方法。",
+      },
+    ],
+    new Set(),
+  );
+  const gloss = candidates.find((c) => c.method === "author_note");
+  assert.ok(gloss);
+  assert.equal(gloss.zh, "覆盖路径规划");
+  assert.doesNotMatch(gloss.quote, /覆 盖/);
+});
+
+test("pseudo-code glosses are rejected", () => {
+  // "当前时间-最近尝试时间（if …）" came out of a table in a real paper.
+  assert.equal(isPlausiblePair("当前时间-最近尝试时间", "if"), false);
+});
+
+test("shredded English keywords are rejected", () => {
+  assert.equal(
+    isPlausiblePair("分布式模型预测控制", "dist rib ut ed model predicti ve cont r ol"),
+    false,
+  );
+  assert.equal(isPlausiblePair("避开障碍物和威胁源", "Revised:2015-05-24"), false);
+});
+
+test("plausible pairs still pass the guard", () => {
+  assert.equal(isPlausiblePair("覆盖路径规划", "coverage path planning"), true);
+  assert.equal(isPlausiblePair("无人机集群", "unmanned aerial vehicle swarm"), true);
+});
+
+test("CJK-only Chinese is required", () => {
+  assert.equal(isPlausiblePair("PI D 控制", "PID controller"), false);
+});
+
+test("concatenated English keywords are dropped, not stored", () => {
+  // The text layer stripped the spaces in the English keyword list.
+  const { candidates } = extractFromSegments(
+    [
+      { page: 1, section: "keywords_zh", text: "关键词：无人机集群；滚动窗口" },
+      {
+        page: 1,
+        section: "keywords_en",
+        text: "Keywords: unmannedaerialvehicle; rolling window",
+      },
+    ],
+    new Set(),
+  );
+  const pairs = candidates.filter((c) => c.method === "bilingual_keyword");
+  // The first pair is unusable; the second one is still good.
+  assert.deepEqual(
+    pairs.map((c) => [c.zh, c.en]),
+    [["滚动窗口", "rolling window"]],
   );
 });

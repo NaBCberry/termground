@@ -13,6 +13,7 @@ import {
   hasCjk,
   hasLatin,
   lastSuspectToken,
+  normalizeCjkSpacing,
   trimTermPrefix,
 } from "./textUtils.ts";
 
@@ -96,6 +97,54 @@ export const STOP_TERMS = new Set([
   "实验结果",
   "研究方法",
 ]);
+
+/**
+ * Journal boilerplate that ends up on the same extracted line as the keyword
+ * list. Everything from the first marker on is page furniture, not keywords.
+ */
+export const METADATA_MARKERS = [
+  "中图分类号", "中图法分类号", "文献标识码", "文献标志码", "文章编号",
+  "收稿日期", "修回日期", "基金项目", "作者简介", "通信作者", "通讯作者",
+  "引用格式", "DOI", "Received", "Revised", "Accepted", "Published",
+  "Citation", "E-mail", "Email",
+];
+
+const EN_STOPWORDS = new Set([
+  "if", "else", "for", "and", "or", "of", "in", "on", "to", "the", "a", "an",
+  "is", "are", "was", "were", "with", "by", "et", "al",
+]);
+
+/** "dist rib ut ed model predicti ve cont r ol" — the PDF broke every word. */
+const FRAGMENTED_LATIN = /\b[a-z]{1,2}\b(?=.*\b[a-z]{1,2}\b)/;
+
+export function truncateAtMetadata(text: string): string {
+  let cut = text.length;
+  for (const marker of METADATA_MARKERS) {
+    const index = text.indexOf(marker);
+    if (index >= 0 && index < cut) cut = index;
+  }
+  return text.slice(0, cut);
+}
+
+/**
+ * Reject pairs that cannot be a term, before they become candidates.
+ *
+ * Real papers supply plenty of counterexamples: pseudo-code glosses pairing
+ * 当前时间-最近尝试时间 with "if", and keyword lines whose English is shredded
+ * into one- and two-letter fragments by the text layer.
+ */
+export function isPlausiblePair(zh: string, en: string): boolean {
+  const z = cleanSurface(zh);
+  const e = cleanSurface(en);
+  if (z.length < 2 || z.length > 14) return false;
+  if (/[A-Za-z0-9]/.test(z)) return false;
+  if (e.length < 2 || e.length > 48) return false;
+  if (!/[A-Za-z]{3,}/.test(e)) return false;
+  if (EN_STOPWORDS.has(e.toLowerCase())) return false;
+  if (FRAGMENTED_LATIN.test(e.toLowerCase())) return false;
+  if (METADATA_MARKERS.some((marker) => e.includes(marker))) return false;
+  return true;
+}
 
 /** 中文术语（English Term, ABBR） */
 function zhFirstRegex(): RegExp {
@@ -185,7 +234,7 @@ export function findEnglishFirstNotes(text: string): RawGloss[] {
 }
 
 export function splitKeywordList(raw: string, cutLatin = false): string[] {
-  let text = raw.replace(/[（(].*?[)）]/g, "");
+  let text = truncateAtMetadata(raw).replace(/[（(].*?[)）]/g, "");
   if (cutLatin) {
     // A Chinese keyword line is occasionally merged with the following English
     // abstract by the PDF layout; cut it at the first long Latin run.
@@ -233,13 +282,17 @@ export function extractFromSegments(
   let authorNotes = 0;
 
   for (const segment of segments) {
-    const text = segment.text;
+    // Normalise here rather than trusting the caller: the PDF text layer puts
+    // a space between every CJK glyph, which would break both the gloss regex
+    // and the stored evidence quote.
+    const text = normalizeCjkSpacing(segment.text);
 
     const glosses = [
       ...findAuthorNotes(text, knownZh),
       ...findEnglishFirstNotes(text),
     ];
     for (const gloss of glosses) {
+      if (!isPlausiblePair(gloss.zh, gloss.en)) continue;
       const score =
         gloss.method === "author_note" ? (gloss.certain ? 0.95 : 0.6) : 0.9;
       candidates.push({
@@ -279,6 +332,11 @@ export function extractFromSegments(
     const { segment, value: zh } = zhKeywords[i];
     const en = enKeywords[i].value;
     if (!hasCjk(zh) || !hasLatin(en)) continue;
+    if (!isPlausiblePair(zh, en)) continue;
+    // A keyword whose spaces were stripped by the text layer arrives as one
+    // long run ("unmannedaerialvehicle"). It cannot be un-concatenated without
+    // a dictionary, so drop it instead of storing a wrong term.
+    if (!en.includes(" ") && !en.includes("-") && en.length > 18) continue;
     candidates.push({
       zh,
       en,
