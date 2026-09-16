@@ -47,6 +47,8 @@ export interface ExtractionStats {
   zhKeywords: number;
   enKeywords: number;
   unmappedCandidates: number;
+  /** Candidates thrown away for being unusable; surfaced so the loss is visible. */
+  rejected: number;
 }
 
 export interface RawGloss {
@@ -276,6 +278,7 @@ export function extractFromSegments(
   minFreq = 2,
 ): ExtractionResult {
   const candidates: Candidate[] = [];
+  let rejected = 0;
   const counts = new Map<string, number>();
   const zhKeywords: Array<{ segment: Segment; value: string }> = [];
   const enKeywords: Array<{ segment: Segment; value: string }> = [];
@@ -292,7 +295,10 @@ export function extractFromSegments(
       ...findEnglishFirstNotes(text),
     ];
     for (const gloss of glosses) {
-      if (!isPlausiblePair(gloss.zh, gloss.en)) continue;
+      if (!isPlausiblePair(gloss.zh, gloss.en)) {
+        rejected++;
+        continue;
+      }
       const score =
         gloss.method === "author_note" ? (gloss.certain ? 0.95 : 0.6) : 0.9;
       candidates.push({
@@ -332,11 +338,17 @@ export function extractFromSegments(
     const { segment, value: zh } = zhKeywords[i];
     const en = enKeywords[i].value;
     if (!hasCjk(zh) || !hasLatin(en)) continue;
-    if (!isPlausiblePair(zh, en)) continue;
+    if (!isPlausiblePair(zh, en)) {
+      rejected++;
+      continue;
+    }
     // A keyword whose spaces were stripped by the text layer arrives as one
     // long run ("unmannedaerialvehicle"). It cannot be un-concatenated without
     // a dictionary, so drop it instead of storing a wrong term.
-    if (!en.includes(" ") && !en.includes("-") && en.length > 18) continue;
+    if (!en.includes(" ") && !en.includes("-") && en.length > 18) {
+      rejected++;
+      continue;
+    }
     candidates.push({
       zh,
       en,
@@ -385,18 +397,45 @@ export function extractFromSegments(
       zhKeywords: zhKeywords.length,
       enKeywords: enKeywords.length,
       unmappedCandidates: unmapped.length,
+      rejected,
     },
   };
 }
 
 /** Candidates the rules are confident enough to write into the term base. */
 export function selectPromotable(candidates: Candidate[]): Candidate[] {
-  return candidates.filter(
-    (candidate) =>
-      candidate.en !== undefined &&
+  return splitCandidates(candidates).promotable;
+}
+
+/**
+ * Frequency candidates need a human to supply the English, and an uncertain
+ * boundary needs a human to fix the Chinese. Both are worth keeping — silently
+ * discarding them would trade recall for precision with no visible cost.
+ */
+export const PENDING_SCORE_FLOOR = 0.4;
+
+export function splitCandidates(candidates: Candidate[]): {
+  promotable: Candidate[];
+  pending: Candidate[];
+} {
+  const promotable: Candidate[] = [];
+  const pending: Candidate[] = [];
+  for (const candidate of candidates) {
+    const hasPair = candidate.en !== undefined && hasLatin(candidate.en);
+    if (
+      hasPair &&
       PROMOTABLE[candidate.method] !== undefined &&
       candidate.score >= PROMOTE_SCORE &&
-      hasLatin(candidate.en) &&
-      hasCjk(candidate.zh),
-  );
+      hasCjk(candidate.zh)
+    ) {
+      promotable.push(candidate);
+      continue;
+    }
+    // Keep the ones a human could reasonably act on; drop the long tail of
+    // low-frequency phrases that only add noise to the review list.
+    if (candidate.score >= PENDING_SCORE_FLOOR) {
+      pending.push(candidate);
+    }
+  }
+  return { promotable, pending };
 }
