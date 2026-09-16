@@ -56,12 +56,30 @@ function emptyData(): TermBaseData {
   return { version: SCHEMA_VERSION, pairs: [], evidence: [], items: {} };
 }
 
+/**
+ * Join with the separator the data directory already uses.
+ *
+ * Mozilla's file APIs are strict about this: mixing "C:\...\Zotero" with
+ * "/termground/terms.json" fails with NS_ERROR_FILE_UNRECOGNIZED_PATH.
+ */
+function joinPath(...parts: string[]): string {
+  const sep = Zotero.DataDirectory.dir.includes("\\") ? "\\" : "/";
+  return parts
+    .filter(Boolean)
+    .map((part, index) =>
+      index === 0
+        ? part.replace(/[\\/]+$/, "")
+        : part.replace(/^[\\/]+/, "").replace(/[\\/]+$/, ""),
+    )
+    .join(sep);
+}
+
 function storeDir(): string {
-  return `${Zotero.DataDirectory.dir}/${STORE_DIR}`;
+  return joinPath(Zotero.DataDirectory.dir, STORE_DIR);
 }
 
 function storePath(): string {
-  return `${storeDir()}/${STORE_FILE}`;
+  return joinPath(storeDir(), STORE_FILE);
 }
 
 export class TermStore {
