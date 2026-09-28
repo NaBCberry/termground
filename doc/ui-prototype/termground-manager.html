@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TermGround · 术语库</title>
+<style>
+/* ============================================================
+   Design tokens — Vercel / Geist inspired
+   baseline: 8px grid · 3 weights (400 read / 500 interact / 600 announce)
+   borders live in the shadow layer, never in `border`
+   ============================================================ */
+:root {
+  --font-sans: Geist, "Geist Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  --font-mono: "Geist Mono", "Cascadia Mono", Consolas, ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", monospace;
+
+  --bg: #ffffff;
+  --bg-subtle: #fafafa;
+  --fg: #171717;
+  --fg-2: #4d4d4d;
+  --fg-3: #666666;
+  --fg-4: #808080;
+  --line: #ebebeb;
+
+  --ring: rgba(0, 0, 0, 0.08);
+  --ring-hover: rgba(0, 0, 0, 0.16);
+  --shadow-border: 0 0 0 1px var(--ring);
+  --shadow-card: 0 0 0 1px rgba(0,0,0,.08), 0 2px 2px rgba(0,0,0,.04), 0 8px 8px -8px rgba(0,0,0,.04), 0 0 0 1px #fafafa;
+  --shadow-card-hover: 0 0 0 1px rgba(0,0,0,.16), 0 2px 2px rgba(0,0,0,.04), 0 8px 8px -8px rgba(0,0,0,.06), 0 0 0 1px #fafafa;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .12), 0 0 0 1px rgba(0, 0, 0, .08);
+
+  --focus: hsla(212, 100%, 48%, 1);
+  --focus-halo: 0 0 0 4px hsla(212, 100%, 48%, .16);
+
+  /* workflow accents — Develop / Preview / Ship */
+  --blue: #0a72ef;
+  --pink: #de1d8d;
+  --red: #ff5b4f;
+  --pink-ring: rgba(222, 29, 141, .28);
+  --red-ring: rgba(255, 91, 79, .24);
+  --red-wash: rgba(255, 91, 79, .05);
+  --link: #0072f5;
+
+  --badge-bg: #ebf5ff;
+  --badge-fg: #0068d6;
+
+  --r-2: 2px; --r-4: 4px; --r-6: 6px; --r-8: 8px; --r-12: 12px; --r-pill: 9999px;
+  --s-4: 4px; --s-8: 8px; --s-12: 12px; --s-16: 16px; --s-32: 32px; --s-40: 40px; --s-56: 56px;
+  --maxw: 1200px;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-subtle: #0a0a0a;
+  --fg: #ededed;
+  --fg-2: #a1a1a1;
+  --fg-3: #8f8f8f;
+  --fg-4: #666666;
+  --line: #2e2e2e;
+
+  --ring: rgba(255, 255, 255, .14);
+  --ring-hover: rgba(255, 255, 255, .26);
+  --shadow-card: 0 0 0 1px rgba(255,255,255,.14), 0 2px 2px rgba(0,0,0,.5), 0 8px 8px -8px rgba(0,0,0,.6), 0 0 0 1px #0a0a0a;
+  --shadow-card-hover: 0 0 0 1px rgba(255,255,255,.26), 0 2px 2px rgba(0,0,0,.5), 0 8px 8px -8px rgba(0,0,0,.6), 0 0 0 1px #0a0a0a;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .14);
+
+  --blue: #3b93ff;
+  --pink: #f065b8;
+  --red: #ff7a70;
+  --pink-ring: rgba(240, 101, 184, .3);
+  --red-ring: rgba(255, 122, 112, .26);
+  --red-wash: rgba(255, 122, 112, .07);
+
+  --badge-bg: rgba(10, 114, 239, .18);
+  --badge-fg: #6fb0ff;
+}
+
+/* ---------- base ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  /* 纵向 flex + min-height，保证内容不足一屏时页脚仍贴窗口底边 */
+  display: flex; flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 14px/1.43 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "liga" 1;
+}
+html[data-theme="dark"] body { font-feature-settings: "liga" 1; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+::selection { background: hsla(0, 0%, 95%, 1); color: var(--fg); }
+html[data-theme="dark"] ::selection { background: #262626; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+mark { background: var(--badge-bg); color: var(--badge-fg); border-radius: var(--r-2); padding: 0 2px; }
+
+/* ---------- type scale ---------- */
+.t-display { font-size: 24px; font-weight: 600; letter-spacing: -.96px; line-height: 1.33; margin: 0; }
+.t-title   { font-size: 16px; font-weight: 600; letter-spacing: -.32px; line-height: 1.5; margin: 0; }
+.t-body    { font-size: 14px; font-weight: 400; line-height: 1.43; }
+.t-ui      { font-size: 14px; font-weight: 500; line-height: 1.43; }
+.t-cap     { font-size: 12px; font-weight: 400; line-height: 1.33; color: var(--fg-3); }
+/* 标签：中文小标签走 sans（Geist Mono 无中文覆盖，落到宋体会又细又不对）。
+   规范禁止正向字距，故 letter-spacing 归零。 */
+.t-label   { font-size: 12px; font-weight: 500; line-height: 1.33; letter-spacing: 0; }
+/* 等宽仅用于真正技术性的拉丁/数字标签：TG 标记、计数、快捷键、score */
+.t-mono    { font-family: var(--font-mono); font-size: 12px; font-weight: 500; line-height: 1.33; text-transform: uppercase; letter-spacing: .02em; }
+.num       { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ---------- shell ---------- */
+/* 只声明横向内边距。若用 padding 简写，会把各使用者的 padding-block 一并清零，
+   且类选择器会压过 `main`（类型选择器）的纵向内边距。 */
+.wrap { max-width: var(--maxw); margin: 0 auto; padding-inline: var(--s-32); }
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--bg);
+  box-shadow: 0 1px 0 0 var(--ring);
+}
+/* 用 padding-block，避免简写把 .wrap 的横向内边距清零（宽屏贴左的根因） */
+.topbar-in { display: flex; align-items: center; gap: var(--s-16); padding-block: var(--s-12); min-height: 56px; }
+.brand { display: flex; align-items: center; gap: var(--s-8); flex: none; }
+.mark {
+  width: 22px; height: 22px; border-radius: var(--r-6);
+  box-shadow: var(--shadow-border);
+  display: grid; place-items: center;
+  /* 600 为规范上限，微标记不用 700 */
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: -.02em;
+  color: var(--fg);
+}
+.wordmark { font-size: 15px; font-weight: 600; letter-spacing: -.4px; }
+
+/* segmented nav — Vercel pill group */
+.nav {
+  display: flex; gap: 2px; padding: 2px; border-radius: var(--r-pill);
+  box-shadow: var(--shadow-border); background: var(--bg); flex: none;
+}
+.nav button {
+  display: flex; align-items: center; gap: var(--s-8);
+  border: none; background: none; border-radius: var(--r-pill);
+  padding: 6px 14px; font-size: 14px; font-weight: 500; color: var(--fg-3);
+  transition: background-color .12s ease, color .12s ease;
+}
+.nav button:hover { color: var(--fg); }
+.nav button[aria-selected="true"] { background: var(--fg); color: var(--bg); }
+.nav button .n { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; opacity: .62; }
+.nav button[aria-selected="true"] .n { opacity: .78; }
+
+.search {
+  margin-left: auto; position: relative; flex: 0 1 260px; min-width: 140px;
+}
+.search input {
+  width: 100%; padding: 8px 40px 8px 12px;
+  background: var(--bg); border: none; border-radius: var(--r-6);
+  box-shadow: var(--shadow-border);
+}
+.search input::placeholder { color: var(--fg-4); }
+.search input:focus { outline: 2px solid var(--focus); outline-offset: 0; box-shadow: var(--focus-halo); }
+.search .kbd-hint {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  pointer-events: none; color: var(--fg-4);
+}
+.top-actions { display: flex; align-items: center; gap: var(--s-8); flex: none; }
+
+/* ---------- controls ---------- */
+.btn {
+  display: inline-flex; align-items: center; gap: var(--s-8);
+  border: none; border-radius: var(--r-6); padding: 8px 16px;
+  min-height: 32px; font-size: 14px; font-weight: 500; line-height: 1.43;
+  transition: background-color .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+.btn-primary { background: var(--fg); color: var(--bg); }
+.btn-primary:hover { background: var(--fg-2); }
+html[data-theme="dark"] .btn-primary:hover { background: #d4d4d4; }
+.btn-ghost { background: var(--bg); color: var(--fg); box-shadow: var(--shadow-border); }
+.btn-ghost:hover { background: var(--bg-subtle); box-shadow: 0 0 0 1px var(--ring-hover); }
+.btn-quiet { background: none; color: var(--fg-3); padding: 8px 10px; }
+.btn-quiet:hover { color: var(--fg); background: var(--bg-subtle); }
+.btn-compact { padding: 4px 10px; min-height: 28px; font-size: 13px; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+.icon-btn {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  border: none; border-radius: var(--r-6); background: var(--bg);
+  box-shadow: var(--shadow-border); color: var(--fg-2);
+}
+.icon-btn:hover { color: var(--fg); box-shadow: 0 0 0 1px var(--ring-hover); }
+
+.input {
+  background: var(--bg); border: none; border-radius: var(--r-6);
+  box-shadow: var(--shadow-border); padding: 8px 12px; min-width: 0; width: 100%;
+}
+.input::placeholder { color: var(--fg-4); }
+.input:focus { outline: 2px solid var(--focus); outline-offset: 0; box-shadow: var(--focus-halo); }
+.input-zh { flex: 0 1 200px; }
+.input-en { flex: 1 1 240px; }
+.arrow { color: var(--fg-4); font-family: var(--font-mono); flex: none; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: var(--s-4);
+  border-radius: var(--r-pill); padding: 1px 10px;
+  font-size: 12px; font-weight: 500; line-height: 1.5; white-space: nowrap;
+}
+.pill-info { background: var(--badge-bg); color: var(--badge-fg); }
+.pill-neutral { color: var(--fg-3); box-shadow: inset 0 0 0 1px var(--ring); }
+.pill-due { background: var(--fg); color: var(--bg); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pill-flag { color: var(--pink); box-shadow: inset 0 0 0 1px var(--pink-ring); }
+.pill-monosm { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.kbd {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+  padding: 1px 6px; border-radius: var(--r-4);
+  box-shadow: var(--shadow-border); color: var(--fg-2); background: var(--bg);
+  display: inline-block;
+}
+
+/* ---------- pipeline strip (Develop → Preview → Ship) ---------- */
+.pipe { background: var(--bg); box-shadow: 0 1px 0 0 var(--ring); }
+/* 两列栅格：左流程 / 右统计。换行只由显式断点控制——
+   改用 flex-wrap 时断行按子项 max-content 判断，会在右侧仍有余量时提前折行。 */
+.pipe-in {
+  display: grid; grid-template-columns: 1fr auto;
+  align-items: center; column-gap: var(--s-16); row-gap: var(--s-8);
+  padding-block: var(--s-12);
+}
+.pipe-stages { display: flex; align-items: center; gap: var(--s-12); flex-wrap: wrap; min-width: 0; }
+.stage { display: flex; align-items: baseline; gap: var(--s-8); }
+.stage .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; align-self: center; flex: none; }
+.stage-extract { color: var(--blue); }
+.stage-review  { color: var(--pink); }
+.stage-export  { color: var(--red); }
+.stage .value { font-family: var(--font-mono); font-size: 16px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; letter-spacing: -.32px; }
+.stage .value.is-focus { color: var(--fg); }
+.stage .unit { font-size: 12px; font-weight: 500; color: var(--fg-3); }
+.sep { color: var(--fg-4); font-family: var(--font-mono); flex: none; }
+.pipe-meta { display: flex; align-items: center; gap: var(--s-12); flex-wrap: wrap; font-weight: 500; }
+
+/* ---------- main ---------- */
+/* 顶部留白给足：标题紧贴流程条发丝线会显得局促 */
+main { flex: 1; padding-block: var(--s-56) var(--s-40); }
+.view-head { margin-bottom: var(--s-32); }
+.view-head .lede { margin: var(--s-8) 0 0; max-width: 68ch; color: var(--fg-2); }
+.view[hidden] { display: none; }
+
+/* ---------- candidate card ---------- */
+.stack { display: flex; flex-direction: column; gap: var(--s-16); }
+.card {
+  background: var(--bg); border-radius: var(--r-8);
+  box-shadow: var(--shadow-card); padding: var(--s-16);
+}
+.card.is-current { box-shadow: 0 0 0 1px var(--fg), var(--shadow-card); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-12); margin-bottom: var(--s-12); }
+.card-head .idx { color: var(--fg-4); }
+.card-head .flags { display: flex; gap: var(--s-8); flex-wrap: wrap; }
+.card-row { display: flex; align-items: center; gap: var(--s-8); flex-wrap: wrap; }
+.card-row .actions { display: flex; gap: var(--s-8); flex: none; }
+.meta { display: flex; gap: var(--s-8); flex-wrap: wrap; margin-top: var(--s-12); }
+.quote {
+  margin: var(--s-12) 0 0; padding: var(--s-12) var(--s-16);
+  background: var(--bg-subtle); border-radius: var(--r-6);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--fg-2); line-height: 1.6;
+}
+.note { margin-top: var(--s-8); color: var(--fg-3); }
+.note em { font-style: normal; color: var(--fg); font-weight: 500; }
+.known {
+  margin-top: var(--s-12); padding: var(--s-8) var(--s-12);
+  border-radius: var(--r-6); background: var(--red-wash);
+  box-shadow: inset 0 0 0 1px var(--red-ring);
+  color: var(--fg-2); font-size: 13px;
+}
+.known b { color: var(--fg); font-weight: 500; }
+.bulk {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-12);
+  flex-wrap: wrap; margin-bottom: var(--s-16);
+}
+
+/* ---------- table ---------- */
+.table-shell { border-radius: var(--r-8); box-shadow: var(--shadow-card); overflow: hidden; background: var(--bg); }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; padding: 10px var(--s-16);
+  background: var(--bg-subtle); color: var(--fg-4);
+  /* 表头是中文，走 sans；等宽 + uppercase 只留给拉丁技术标签 */
+  font-size: 12px; font-weight: 500; letter-spacing: 0; white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+td { padding: 12px var(--s-16); box-shadow: inset 0 -1px 0 var(--line); vertical-align: middle; }
+tr.is-last > td { box-shadow: none; }
+tbody tr.row:hover > td { background: var(--bg-subtle); }
+td.evidence { background: var(--bg-subtle); padding: var(--s-16); }
+.ev-title { margin-bottom: var(--s-8); }
+.ev-item { padding: var(--s-8) 0; color: var(--fg-2); font-size: 13px; line-height: 1.6; }
+.ev-item + .ev-item { box-shadow: inset 0 1px 0 var(--line); }
+.ev-src { color: var(--fg-3); }
+.cell-en { font-weight: 500; }
+.cell-zh { color: var(--fg-2); }
+.expand {
+  border: none; background: none; padding: 2px 6px; border-radius: var(--r-4);
+  color: var(--fg-3); font-family: var(--font-mono); font-size: 12px;
+  font-variant-numeric: tabular-nums; box-shadow: var(--shadow-border);
+}
+.expand:hover { color: var(--fg); }
+.group-head { padding: 12px var(--s-16); background: var(--bg-subtle); }
+.group-head .zh { font-weight: 600; letter-spacing: -.32px; }
+.group-head .sub { color: var(--fg-3); font-size: 12px; }
+.toolbar { display: flex; align-items: center; gap: var(--s-12); flex-wrap: wrap; margin-bottom: var(--s-16); }
+.toolbar .count { margin-left: auto; color: var(--fg-3); font-size: 12px; }
+
+/* ---------- docs ---------- */
+.doc {
+  display: flex; align-items: center; gap: var(--s-16); width: 100%; text-align: left;
+  background: var(--bg); border: none; border-radius: var(--r-8);
+  box-shadow: var(--shadow-card); padding: var(--s-16);
+  transition: box-shadow .12s ease;
+}
+.doc:hover { box-shadow: var(--shadow-card-hover); }
+.doc .doc-main { min-width: 0; }
+.doc .doc-title { font-weight: 500; }
+.doc .doc-meta { margin-top: 2px; color: var(--fg-3); font-size: 12px; }
+.doc .doc-num { margin-left: auto; display: flex; gap: var(--s-16); flex: none; }
+.doc .metric { text-align: right; }
+.doc .metric .v { font-family: var(--font-mono); font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.doc .metric .k { font-size: 12px; color: var(--fg-3); }
+.doc .chev { color: var(--fg-4); flex: none; }
+
+/* ---------- empty ---------- */
+.empty {
+  border-radius: var(--r-8); box-shadow: var(--shadow-card);
+  padding: var(--s-40) var(--s-32); text-align: center; background: var(--bg);
+}
+.empty .t-title { margin-bottom: var(--s-8); }
+.empty p { margin: 0 auto; max-width: 46ch; color: var(--fg-3); font-size: 13px; }
+
+/* ---------- footer ---------- */
+.footer {
+  position: sticky; bottom: 0; z-index: 20;
+  background: var(--bg); box-shadow: 0 -1px 0 0 var(--ring);
+}
+.footer-in { display: flex; align-items: center; gap: var(--s-16); padding-block: 10px; flex-wrap: wrap; }
+.hints { display: flex; align-items: center; gap: var(--s-16); flex-wrap: wrap; color: var(--fg-3); font-size: 12px; font-weight: 500; }
+.hints .h { display: flex; align-items: center; gap: 6px; }
+.footer .right { margin-left: auto; color: var(--fg-3); font-size: 12px; font-weight: 500; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: var(--s-32); z-index: 40;
+  transform: translate(-50%, 8px);
+  display: flex; align-items: center; gap: var(--s-16);
+  background: var(--fg); color: var(--bg);
+  padding: 8px var(--s-16); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-pop);
+  font-size: 13px; font-weight: 500; max-width: 90vw;
+  opacity: 0; pointer-events: none;
+  transition: opacity .16s ease, transform .16s ease;
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.toast button {
+  background: none; border: none; padding: 0; color: var(--bg);
+  font-size: 13px; font-weight: 500; text-decoration: underline; text-underline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card { animation: rise .18s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------- responsive ---------- */
+@media (max-width: 900px) {
+  /* 只改横向内边距。用 padding 简写会把各容器自己的 padding-block 清零，
+     导致流程条折行后首行贴顶、次行贴底。 */
+  .wrap { padding-inline: var(--s-16); }
+  .topbar-in { flex-wrap: wrap; }
+  .search { order: 3; flex: 1 1 100%; margin-left: 0; }
+  .top-actions { margin-left: auto; }
+  .table-shell { overflow-x: auto; }
+  table { min-width: 720px; }
+  .doc .doc-num { gap: var(--s-12); }
+}
+/* 流程条内容实测需 349.6 + 142.1 + 16 = 508px，加两侧内边距后约 540px。
+   只有在真正放不下时才降为单列，避免右侧大片留白。 */
+@media (max-width: 560px) {
+  main { padding-block: var(--s-40) var(--s-32); }
+  .pipe-in { grid-template-columns: 1fr; }
+  .input-zh { flex: 1 1 100%; }
+  .nav button { padding: 6px 10px; }
+  .nav button .lbl { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">TG</span>
+      <span class="wordmark">TermGround</span>
+    </div>
+
+    <nav class="nav" role="tablist" aria-label="术语库视图">
+      <button role="tab" id="tab-pending" aria-controls="view-pending" aria-selected="true" data-view="pending">
+        <span class="lbl">待确认</span><span class="n" data-count="pending">0</span>
+      </button>
+      <button role="tab" id="tab-terms" aria-controls="view-terms" aria-selected="false" data-view="terms">
+        <span class="lbl">术语库</span><span class="n" data-count="terms">0</span>
+      </button>
+      <button role="tab" id="tab-docs" aria-controls="view-docs" aria-selected="false" data-view="docs">
+        <span class="lbl">文献</span><span class="n" data-count="docs">0</span>
+      </button>
+    </nav>
+
+    <div class="search">
+      <input id="q" type="search" placeholder="搜索术语（中英均可）" aria-label="搜索术语">
+      <span class="kbd-hint kbd" aria-hidden="true">⌘K</span>
+    </div>
+
+    <div class="top-actions">
+      <button class="icon-btn" id="theme" type="button" aria-label="切换主题" title="切换主题">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <circle cx="8" cy="8" r="3.2"></circle>
+          <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4" stroke-linecap="round"></path>
+        </svg>
+      </button>
+      <button class="btn btn-primary" id="export" type="button">导出术语表</button>
+    </div>
+  </div>
+</header>
+
+<div class="pipe">
+  <div class="wrap pipe-in">
+    <div class="pipe-stages">
+      <div class="stage stage-extract">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="t-label">抽取</span>
+        <span class="value num" data-count="docs">0</span>
+        <span class="unit">篇文献</span>
+      </div>
+      <span class="sep" aria-hidden="true">›</span>
+      <div class="stage stage-review">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="t-label">确认</span>
+        <span class="value num is-focus" data-count="pending">0</span>
+        <span class="unit">待办</span>
+      </div>
+      <span class="sep" aria-hidden="true">›</span>
+      <div class="stage stage-export">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="t-label">导出</span>
+        <span class="value num" data-count="terms">0</span>
+        <span class="unit">术语对</span>
+      </div>
+    </div>
+    <div class="pipe-meta">
+      <span class="t-cap">证据 <span class="num" data-count="evidence">0</span></span>
+      <span class="t-cap">verified <span class="num" data-count="verified">0</span></span>
+      <span class="t-cap">漂移 <span class="num" id="drift-count">0</span></span>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+
+  <!-- ============ 待确认 ============ -->
+  <section class="view" id="view-pending" role="tabpanel" aria-labelledby="tab-pending">
+    <div class="view-head">
+      <h1 class="t-display">待确认候选</h1>
+      <p class="t-body lede">引擎提出候选，入库由人确认。改写过的译法会降为 <span class="num">suggested</span>（human_review）——原始引文不再逐字支撑，可信度必须看得见。</p>
+    </div>
+    <div class="bulk">
+      <div class="t-cap" id="pending-bulk">本批 40 条，逐条过或按抽取方式批量处理</div>
+      <button class="btn btn-ghost btn-compact" id="reject-low" type="button">批量驳回低分候选</button>
+    </div>
+    <div class="stack" id="pending-list"></div>
+  </section>
+
+  <!-- ============ 术语库 ============ -->
+  <section class="view" id="view-terms" role="tabpanel" aria-labelledby="tab-terms" hidden>
+    <div class="view-head">
+      <h1 class="t-display">术语库</h1>
+      <p class="t-body lede">每条术语对都能追到原文出处。同一中文概念出现多种英文写法时并列展示，工具不替你选。</p>
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-ghost btn-compact" id="drift-toggle" type="button" aria-pressed="false">漂移分组视图</button>
+      <span class="count" id="terms-count"></span>
+    </div>
+    <div class="table-shell">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">英文</th>
+            <th scope="col">中文</th>
+            <th scope="col">状态</th>
+            <th scope="col">来源</th>
+            <th scope="col">证据</th>
+          </tr>
+        </thead>
+        <tbody id="terms-body"></tbody>
+      </table>
+    </div>
+    <div id="terms-empty"></div>
+  </section>
+
+  <!-- ============ 文献 ============ -->
+  <section class="view" id="view-docs" role="tabpanel" aria-labelledby="tab-docs" hidden>
+    <div class="view-head">
+      <h1 class="t-display">文献</h1>
+      <p class="t-body lede">已摄取的文献，以及各自贡献的术语对与证据量。</p>
+    </div>
+    <div class="stack" id="docs-list"></div>
+    <div id="docs-empty"></div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-in">
+    <div class="hints" id="hints">
+      <span class="h"><span class="kbd">Enter</span> 确认并下一条</span>
+      <span class="h"><span class="kbd">R</span> 驳回</span>
+      <span class="h"><span class="kbd">S</span> 跳过</span>
+      <span class="h">每批 40 条</span>
+    </div>
+    <span class="right" id="footer-right"></span>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------
+     数据 —— 取自 articleTranslation 原型真实抽取结果
+     ------------------------------------------------------------------ */
+  var DATA = {
+    pending: [
+      {
+        id: 'c1',
+        zh: '文融合到达时间差',
+        en: 'Time Difference of Arrival',
+        zhFixed: '到达时间差',
+        extractor: '作者自注',
+        score: '0.58',
+        doc: '多源融合定位研究',
+        page: 3,
+        section: 'Methods',
+        flags: ['中文边界待修正'],
+        quote: [
+          { t: '本文融合' },
+          { t: '到达时间差', hl: true },
+          { t: '（Time Difference of Arrival, TDOA）与惯性测量数据，实现协同定位。' }
+        ],
+        note: '低分候选几乎都败在中文左边界。中文框默认聚焦且全选，改一个词就能入库。',
+        known: null
+      },
+      {
+        id: 'c2',
+        zh: '单元',
+        en: '',
+        zhFixed: '惯性测量单元',
+        extractor: '词频候选',
+        score: '0.41',
+        doc: '惯性组合导航研究',
+        page: 7,
+        section: 'Methods',
+        flags: ['缺英文表述'],
+        quote: [
+          { t: '…角速度与加速度信息由' },
+          { t: '惯性测量单元', hl: true },
+          { t: '（IMU）提供，用于状态更新。' }
+        ],
+        note: '疑似截断：原文为「惯性测量单元」。中英任一为空时确认按钮禁用。',
+        known: null
+      },
+      {
+        id: 'c3',
+        zh: '交叉定位',
+        en: 'Cross-Localization',
+        zhFixed: '交叉定位',
+        extractor: '中英关键词',
+        score: '0.92',
+        doc: '多源融合定位研究',
+        page: 1,
+        section: 'Keywords',
+        flags: ['术语漂移'],
+        quote: [
+          { t: '关键词：交叉定位；多源信息融合 / Keywords: ' },
+          { t: 'Cross-Localization', hl: true },
+          { t: '; Multi-source Fusion' }
+        ],
+        note: null,
+        known: {
+          text: '库中已有 Cross Localization（preferred · verified，来自《交叉定位算法研究》）。两种写法会在术语库的漂移视图中并列。'
+        }
+      }
+    ],
+    terms: [
+      {
+        en: 'Cross-Localization', zh: '交叉定位',
+        role: 'preferred', status: 'verified', source: 'bilingual_keyword',
+        evidence: [
+          { quote: '关键词：交叉定位；多源信息融合 / Keywords: Cross-Localization; Multi-source Fusion', doc: '多源融合定位研究', page: 1 },
+          { quote: '关键词：交叉定位 / Keywords: Cross Localization', doc: '交叉定位算法研究', page: 1 }
+        ],
+        drift: '同一中文概念存在 2 种英文写法，导出前需人工择一'
+      },
+      {
+        en: 'Cross Localization', zh: '交叉定位',
+        role: 'preferred', status: 'verified', source: 'bilingual_keyword',
+        evidence: [
+          { quote: '关键词：交叉定位 / Keywords: Cross Localization', doc: '交叉定位算法研究', page: 1 }
+        ],
+        drift: null
+      },
+      {
+        en: 'Ultra-Wideband (UWB)', zh: '超宽带',
+        role: 'preferred', status: 'verified', source: 'author_note',
+        evidence: [
+          { quote: '本文采用超宽带（Ultra-Wideband, UWB）信号完成测距。', doc: 'UWB-based Cooperative Positioning', page: 2 }
+        ],
+        drift: null
+      },
+      {
+        en: 'Particle Filter', zh: '粒子滤波',
+        role: 'preferred', status: 'verified', source: 'english_note',
+        evidence: [
+          { quote: '状态估计采用粒子滤波（Particle Filter）实现。', doc: '惯性组合导航研究', page: 5 }
+        ],
+        drift: null
+      },
+      {
+        en: 'Multi-source Fusion', zh: '多源信息融合',
+        role: 'preferred', status: 'suggested', source: 'human_review',
+        evidence: [
+          { quote: '关键词：交叉定位；多源信息融合 / Keywords: Cross-Localization; Multi-source Fusion', doc: '多源融合定位研究', page: 1 }
+        ],
+        drift: null
+      },
+      {
+        en: 'sample efficiency', zh: '样本效率',
+        role: 'preferred', status: 'attested', source: 'seed · AITD',
+        evidence: [
+          { quote: 'Seed glossary entry imported from AITD baseline.', doc: 'AITD seed', page: 0 }
+        ],
+        drift: null
+      }
+    ],
+    docs: [
+      { title: '多源融合定位研究', pages: 8, terms: 3, pending: 2, date: '2026-09-27' },
+      { title: '交叉定位算法研究', pages: 6, terms: 1, pending: 1, date: '2026-09-26' },
+      { title: '惯性组合导航研究', pages: 10, terms: 1, pending: 1, date: '2026-09-25' },
+      { title: 'UWB-based Cooperative Positioning', pages: 12, terms: 1, pending: 0, date: '2026-09-24' }
+    ]
+  };
+
+  var STATE = { view: 'pending', q: '', drift: false, current: 0, undo: null, expanded: {} };
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var $ = function (sel, root) { return (root || document).querySelector(sel); };
+  var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
+  var esc = function (s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  };
+  var STATUS_TEXT = { verified: 'verified', suggested: 'suggested', attested: 'attested' };
+
+  /* ---------------- counts ---------------- */
+  function counts() {
+    return {
+      pending: DATA.pending.length,
+      terms: DATA.terms.length,
+      docs: DATA.docs.length,
+      evidence: DATA.terms.reduce(function (n, t) { return n + t.evidence.length; }, 0),
+      verified: DATA.terms.filter(function (t) { return t.status === 'verified'; }).length,
+      drift: DATA.terms.filter(function (t) { return !!t.drift; }).length
+    };
+  }
+  function renderCounts() {
+    var c = counts();
+    $$('[data-count]').forEach(function (el) {
+      var k = el.getAttribute('data-count');
+      if (c[k] !== undefined) el.textContent = c[k];
+    });
+    $('#drift-count').textContent = c.drift;
+    $('#footer-right').textContent = '证据 ' + c.evidence + ' 条 · 已确认 ' + c.verified + ' 条';
+  }
+
+  /* ---------------- 待确认 ---------------- */
+  function cardHtml(item, i, total) {
+    var quote = item.quote.map(function (s) {
+      return s.hl ? '<mark>' + esc(s.t) + '</mark>' : esc(s.t);
+    }).join('');
+    var flags = item.flags.map(function (f) {
+      return '<span class="pill pill-flag">' + esc(f) + '</span>';
+    }).join('');
+    var meta = [
+      '<span class="pill pill-neutral">' + esc(item.extractor) + '</span>',
+      '<span class="pill pill-neutral pill-monosm">score ' + esc(item.score) + '</span>',
+      '<span class="pill pill-neutral">' + esc(item.doc) + ' p.' + item.page + '</span>',
+      '<span class="pill pill-neutral">' + esc(item.section) + '</span>'
+    ].join('');
+    var known = item.known
+      ? '<div class="known">库中已有：<b>' + esc(item.known.text) + '</b></div>'
+      : '';
+    var note = item.note ? '<div class="note t-cap">' + esc(item.note) + '</div>' : '';
+    var disabled = (!item.en || !item.zh) ? ' aria-disabled="true"' : '';
+
+    return '' +
+      '<article class="card' + (i === STATE.current ? ' is-current' : '') + '" data-id="' + item.id + '">' +
+        '<div class="card-head">' +
+          '<span class="t-label idx">候选 ' + (i + 1) + ' / ' + total + '</span>' +
+          '<span class="flags">' + flags + '</span>' +
+        '</div>' +
+        '<div class="card-row">' +
+          '<input class="input input-zh" value="' + esc(item.zh) + '" aria-label="中文表述" data-field="zh">' +
+          '<span class="arrow" aria-hidden="true">&rarr;</span>' +
+          '<input class="input input-en" value="' + esc(item.en) + '" placeholder="填写英文表述" aria-label="英文表述" data-field="en">' +
+          '<span class="actions">' +
+            '<button class="btn btn-primary btn-compact" type="button" data-act="confirm"' + disabled + '>确认入库</button>' +
+            '<button class="btn btn-quiet btn-compact" type="button" data-act="reject">驳回</button>' +
+          '</span>' +
+        '</div>' +
+        '<div class="meta">' + meta + '</div>' +
+        '<blockquote class="quote">' + quote + '</blockquote>' +
+        note + known +
+      '</article>';
+  }
+
+  function renderPending() {
+    var q = STATE.q.trim().toLowerCase();
+    var list = DATA.pending.filter(function (it) {
+      if (!q) return true;
+      return (it.zh + ' ' + it.en + ' ' + it.doc + ' ' + it.extractor).toLowerCase().indexOf(q) >= 0;
+    });
+    var total = DATA.pending.length;
+    var host = $('#pending-list');
+    if (!list.length) {
+      host.innerHTML = '';
+      $('#pending-bulk').textContent = '';
+      host.innerHTML =
+        '<div class="empty"><div class="t-title">没有待确认候选</div>' +
+        '<p>术语库已收敛。右键一篇文献选择「加入术语库」，引擎会重新跑一轮抽取。</p></div>';
+      return;
+    }
+    $('#pending-bulk').textContent = '本批 40 条，逐条过或按抽取方式批量处理';
+    host.innerHTML = list.map(function (it) {
+      var i = DATA.pending.indexOf(it);
+      return cardHtml(it, i, total);
+    }).join('');
+  }
+
+  function setCurrent(i) {
+    STATE.current = Math.max(0, Math.min(i, DATA.pending.length - 1));
+    $$('#pending-list .card').forEach(function (card, idx) { void idx; });
+    var cards = $$('#pending-list .card');
+    cards.forEach(function (c) { c.classList.remove('is-current'); });
+    var target = cards[STATE.current];
+    if (target) {
+      target.classList.add('is-current');
+      target.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' });
+      var zh = $('[data-field="zh"]', target);
+      if (zh) { zh.focus(); zh.select(); }
+    }
+  }
+
+  function removePending(id, mode, label) {
+    var idx = DATA.pending.findIndex(function (it) { return it.id === id; });
+    if (idx < 0) return;
+    var item = DATA.pending[idx];
+    STATE.undo = { item: item, idx: idx, mode: mode };
+    DATA.pending.splice(idx, 1);
+    STATE.current = Math.min(STATE.current, Math.max(0, DATA.pending.length - 1));
+    renderPending();
+    renderCounts();
+    setCurrent(STATE.current);
+    toast(label, '撤销', function () {
+      if (!STATE.undo) return;
+      DATA.pending.splice(STATE.undo.idx, 0, STATE.undo.item);
+      STATE.undo = null;
+      renderPending();
+      renderCounts();
+      setCurrent(STATE.undo ? STATE.undo.idx : 0);
+      toast('已恢复该候选', null, null);
+    });
+  }
+
+  /* ---------------- 术语库 ---------------- */
+  function badge(status) {
+    var cls = status === 'verified' ? 'pill pill-info'
+      : status === 'suggested' ? 'pill pill-flag'
+      : 'pill pill-neutral';
+    return '<span class="' + cls + '">' + esc(STATUS_TEXT[status] || status) + '</span>';
+  }
+
+  function evidenceHtml(t) {
+    var rows = t.evidence.map(function (e) {
+      var loc = e.page > 0 ? (' p.' + e.page) : '';
+      return '<div class="ev-item">「' + esc(e.quote) + '」 <span class="ev-src">— ' + esc(e.doc) + loc + '</span></div>';
+    }).join('');
+    var warn = t.drift ? '<div class="known" style="margin-top:12px">⚠ 术语漂移：' + esc(t.drift) + '</div>' : '';
+    return '<div class="ev-title t-label">证据 ' + t.evidence.length + ' 条</div>' + rows + warn;
+  }
+
+  function termRows(list) {
+    return list.map(function (t, i) {
+      var key = t.en + '|' + t.zh;
+      var open = !!STATE.expanded[key];
+      var last = (i === list.length - 1) && !open;
+      return '' +
+        '<tr class="row' + (last ? ' is-last' : '') + '">' +
+          '<td class="cell-en">' + esc(t.en) + '</td>' +
+          '<td class="cell-zh">' + esc(t.zh) + '</td>' +
+          '<td><span class="t-cap" style="margin-right:6px">' + esc(t.role) + '</span>' + badge(t.status) + '</td>' +
+          '<td><span class="t-cap num">' + esc(t.source) + '</span></td>' +
+          '<td><button class="expand" type="button" data-ev="' + esc(key) + '" aria-expanded="' + open + '">' + t.evidence.length + '</button></td>' +
+        '</tr>' +
+        (open
+          ? '<tr><td class="evidence" colspan="5">' + evidenceHtml(t) + '</td></tr>'
+          : '');
+    }).join('');
+  }
+
+  function renderTerms() {
+    var q = STATE.q.trim().toLowerCase();
+    var list = DATA.terms.filter(function (t) {
+      if (!q) return true;
+      return (t.en + ' ' + t.zh + ' ' + t.source + ' ' + t.status).toLowerCase().indexOf(q) >= 0;
+    });
+    var body = $('#terms-body');
+    var empty = $('#terms-empty');
+
+    if (!list.length) {
+      body.innerHTML = '';
+      $('#terms-count').textContent = '';
+      empty.innerHTML =
+        '<div class="empty"><div class="t-title">没有匹配的术语</div>' +
+        '<p>共 ' + DATA.terms.length + ' 条术语对，当前筛选结果为 0 条。</p></div>';
+      return;
+    }
+    empty.innerHTML = '';
+
+    if (STATE.drift) {
+      var groups = {};
+      var order = [];
+      list.forEach(function (t) {
+        if (!groups[t.zh]) { groups[t.zh] = []; order.push(t.zh); }
+        groups[t.zh].push(t);
+      });
+      body.innerHTML = order.map(function (zh, gi) {
+        var items = groups[zh];
+        var warn = items.length > 1
+          ? '<span class="pill pill-flag">' + items.length + ' 种写法</span>'
+          : '<span class="pill pill-neutral">单一写法</span>';
+        var head =
+          '<tr><td class="group-head" colspan="5">' +
+            '<span class="zh">' + esc(zh) + '</span> ' +
+            '<span class="sub" style="margin-left:8px">' + items.length + ' 个英文术语对</span>' +
+            '<span style="float:right">' + warn + '</span>' +
+          '</td></tr>';
+        return head + termRows(items);
+      }).join('');
+      $('#terms-count').textContent = '共 ' + DATA.terms.length + ' 条 · 归并为 ' + order.length + ' 个中文概念 · 分组视图显示 ' + list.length + ' 条';
+    } else {
+      body.innerHTML = termRows(list);
+      $('#terms-count').textContent = '共 ' + DATA.terms.length + ' 条 · 显示 ' + list.length + ' 条';
+    }
+  }
+
+  /* ---------------- 文献 ---------------- */
+  function renderDocs() {
+    var q = STATE.q.trim().toLowerCase();
+    var list = DATA.docs.filter(function (d) {
+      return !q || d.title.toLowerCase().indexOf(q) >= 0;
+    });
+    var host = $('#docs-list');
+    var empty = $('#docs-empty');
+    if (!list.length) {
+      host.innerHTML = '';
+      empty.innerHTML =
+        '<div class="empty"><div class="t-title">没有匹配的文献</div>' +
+        '<p>共 ' + DATA.docs.length + ' 篇已摄取文献，当前筛选结果为 0 篇。</p></div>';
+      return;
+    }
+    empty.innerHTML = '';
+    host.innerHTML = list.map(function (d) {
+      return '' +
+        '<button class="doc" type="button" data-doc="' + esc(d.title) + '">' +
+          '<span class="doc-main">' +
+            '<span class="doc-title">' + esc(d.title) + '</span>' +
+            '<span class="doc-meta">PDF · <span class="num">' + d.pages + '</span> 页 · 摄取于 <span class="num">' + esc(d.date) + '</span></span>' +
+          '</span>' +
+          '<span class="doc-num">' +
+            '<span class="metric"><span class="v">' + d.terms + '</span><br><span class="k">术语对</span></span>' +
+            '<span class="metric"><span class="v">' + d.pending + '</span><br><span class="k">待确认</span></span>' +
+          '</span>' +
+          '<span class="chev" aria-hidden="true">&rarr;</span>' +
+        '</button>';
+    }).join('');
+  }
+
+  /* ---------------- toast ---------------- */
+  var toastTimer = null;
+  function toast(msg, actionLabel, action) {
+    var el = $('#toast');
+    clearTimeout(toastTimer);
+    el.innerHTML = '<span>' + esc(msg) + '</span>' +
+      (actionLabel ? '<button type="button" id="toast-act">' + esc(actionLabel) + '</button>' : '');
+    el.classList.add('on');
+    if (actionLabel && action) {
+      $('#toast-act').addEventListener('click', function () {
+        action();
+        el.classList.remove('on');
+      });
+    }
+    toastTimer = setTimeout(function () { el.classList.remove('on'); }, 3600);
+  }
+
+  /* ---------------- view switching ---------------- */
+  function setView(v) {
+    STATE.view = v;
+    $$('[role="tab"]').forEach(function (t) {
+      t.setAttribute('aria-selected', t.getAttribute('data-view') === v ? 'true' : 'false');
+    });
+    $$('.view').forEach(function (s) {
+      s.hidden = s.getAttribute('id') !== 'view-' + v;
+    });
+    $('#hints').style.display = v === 'pending' ? '' : 'none';
+    $('#footer-right').style.display = '';
+  }
+
+  /* ---------------- events ---------------- */
+  document.addEventListener('click', function (e) {
+    var tab = e.target.closest('[data-view]');
+    if (tab) { setView(tab.getAttribute('data-view')); return; }
+
+    var act = e.target.closest('[data-act]');
+    if (act) {
+      var card = act.closest('.card');
+      var id = card.getAttribute('data-id');
+      var item = DATA.pending.find(function (x) { return x.id === id; });
+      if (!item) return;
+      if (act.getAttribute('data-act') === 'confirm') {
+        var zh = $('[data-field="zh"]', card).value.trim();
+        var en = $('[data-field="en"]', card).value.trim();
+        if (!zh || !en) return;
+        var edited = zh !== item.zh;
+        removePending(id, 'confirm',
+          edited
+            ? '已入库「' + zh + ' / ' + en + '」· 中文被改写，状态记为 suggested（human_review）'
+            : '已入库「' + zh + ' / ' + en + '」· 引文逐字支撑，状态记为 verified');
+      } else {
+        removePending(id, 'reject', '已驳回该候选 · 同一候选不会再次弹出');
+      }
+      return;
+    }
+
+    var ev = e.target.closest('[data-ev]');
+    if (ev) {
+      var key = ev.getAttribute('data-ev');
+      STATE.expanded[key] = !STATE.expanded[key];
+      renderTerms();
+      return;
+    }
+
+    var doc = e.target.closest('[data-doc]');
+    if (doc) {
+      var title = doc.getAttribute('data-doc');
+      setView('terms');
+      STATE.q = '';
+      $('#q').value = title;
+      renderTerms();
+      toast('已按《' + title + '》过滤术语库', null, null);
+      return;
+    }
+
+    if (e.target.closest('#export')) {
+      toast('调用 termground export --format pair --target-lang en-US，输出可直接喂给 BabelDOC', null, null);
+      return;
+    }
+
+    if (e.target.closest('#reject-low')) {
+      var low = DATA.pending.filter(function (x) { return parseFloat(x.score) < 0.6; });
+      if (!low.length) { toast('本批没有低于 0.6 的候选', null, null); return; }
+      DATA.pending = DATA.pending.filter(function (x) { return parseFloat(x.score) >= 0.6; });
+      STATE.current = 0;
+      renderPending(); renderCounts();
+      toast('已批量驳回 ' + low.length + ' 条低分候选', null, null);
+      return;
+    }
+
+    if (e.target.closest('#drift-toggle')) {
+      STATE.drift = !STATE.drift;
+      var btn = $('#drift-toggle');
+      btn.setAttribute('aria-pressed', STATE.drift ? 'true' : 'false');
+      btn.classList.toggle('btn-ghost', !STATE.drift);
+      btn.classList.toggle('btn-primary', STATE.drift);
+      renderTerms();
+      return;
+    }
+
+    if (e.target.closest('#theme')) {
+      var html = document.documentElement;
+      html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+      return;
+    }
+  });
+
+  document.addEventListener('input', function (e) {
+    if (e.target.id === 'q') {
+      STATE.q = e.target.value;
+      renderPending(); renderTerms(); renderDocs();
+      return;
+    }
+    // 中英任一为空 → 确认按钮禁用
+    var field = e.target.closest('[data-field]');
+    if (field) {
+      var card = field.closest('.card');
+      var zhv = $('[data-field="zh"]', card).value.trim();
+      var env = $('[data-field="en"]', card).value.trim();
+      var btn = $('[data-act="confirm"]', card);
+      if (btn) {
+        if (zhv && env) btn.removeAttribute('aria-disabled');
+        else btn.setAttribute('aria-disabled', 'true');
+      }
+    }
+  });
+
+  document.addEventListener('keydown', function (e) {
+    var meta = e.metaKey || e.ctrlKey;
+    if (meta && e.key.toLowerCase() === 'k') {
+      e.preventDefault(); $('#q').focus(); $('#q').select(); return;
+    }
+    if (e.key === 'Escape' && document.activeElement === $('#q')) {
+      STATE.q = ''; $('#q').value = '';
+      renderPending(); renderTerms(); renderDocs();
+      $('#q').blur();
+      return;
+    }
+    if (STATE.view !== 'pending') return;
+    var typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+    if (typing && !(e.key === 'Enter' && e.ctrlKey)) return;
+    var k = e.key.toLowerCase();
+    if (k === 'r') {
+      e.preventDefault();
+      var cardR = $$('#pending-list .card')[STATE.current];
+      if (cardR) removePending(cardR.getAttribute('data-id'), 'reject', '已驳回该候选 · 同一候选不会再次弹出');
+    } else if (k === 's') {
+      e.preventDefault();
+      setCurrent(STATE.current + 1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      var cardE = $$('#pending-list .card')[STATE.current];
+      if (!cardE) return;
+      var btn = $('[data-act="confirm"]', cardE);
+      if (btn && btn.getAttribute('aria-disabled') !== 'true') btn.click();
+    }
+  });
+
+  /* ---------------- boot ---------------- */
+  function renderAll() { renderCounts(); renderPending(); renderTerms(); renderDocs(); }
+  renderAll();
+  setView('pending');
+  setCurrent(0);
+})();
+</script>
+</body>
+</html>
