@@ -275,6 +275,8 @@ To build and release, use
 npm run release
 ```
 
+> 📖 本仓库的代码检查、构建与自动发布流程（含标签语义、一键发布、`update.json` 机制）见 [doc/release.md](doc/release.md)。
+
 > [!note]
 > This will use [Bumpp](https://github.com/antfu-collective/bumpp) to prompt for the new version number, locally bump the version, run any (pre/post)version scripts defined in `package.json`, commit, build (optional), tag the commit with the version number and push commits and git tags. Bumpp can be configured in `zotero-plugin-config.ts`; for example, add `release: { bumpp: { execute: "npm run build" } }` to also build before committing.
 >
