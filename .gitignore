@@ -3,6 +3,8 @@
 
 # Node.js
 node_modules
+
+# 锁文件：CI 使用 npm ci + 依赖缓存，需要提交 package-lock.json
 pnpm-lock.yaml
 yarn.lock
 
@@ -14,5 +16,3 @@ tsconfig.tsbuildinfo
 .scaffold
 build
 logs
-
-package-lock.json
