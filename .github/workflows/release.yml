@@ -1,21 +1,101 @@
 name: Release
 
+# 规范化发布：先由维护者在本地打完版本号并推送 v* 标签（npm run release），
+# 本工作流在 CI 中重新构建并把 .xpi 发布到 GitHub Release。
+# 也支持在 Actions 页面手动重跑某个已存在的标签。
 on:
   push:
     tags:
-      - v**
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的标签，例如 v0.1.0"
+        required: true
+        type: string
 
+# 发布需要创建 Release、上传资产、维护 update.json 所在的 release 标签
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
+
+# 同一标签的发布不允许并发，避免同时上传资产或重复创建 Release
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  create-release:
-    uses: zotero-plugin-dev/workflows/.github/workflows/release-plugin.yml@main
-    # You can customize any of the inputs here.
-    # If you omit an input, its default value will be used.
-    with:
-      build: "npm run build"
-      release: "npm run release"
-    secrets: inherit
+  publish:
+    name: Build & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag and version
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+          # 必须取回完整历史和所有标签：changelog 由 git 标签区间生成
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 标签与 package.json 版本必须一致，否则脚手架会为错误的版本创建 Release
+      - name: Verify tag matches package.json
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "::error::标签 $TAG 与 package.json 的版本 $PKG_VERSION 不一致，请核对后重新打标签。"
+            exit 1
+          fi
+
+      - name: Build plugin
+        run: npm run build
+
+      # zotero-plugin release 在 CI 中不会改动 git（不 bump、不提交、不打标签），
+      # 只做两件事：
+      #   1. 为 v<version> 创建 GitHub Release 并上传 XPI；
+      #   2. 新建/更新 release 标签下的 update.json / update-beta.json。
+      - name: Publish to GitHub Releases
+        run: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write job summary
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          {
+            echo "### 发布完成 ✅"
+            echo ""
+            echo "- 版本：\`${VERSION}\`"
+            echo "- Release：https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+            echo "- 更新清单：https://github.com/${{ github.repository }}/releases/download/release/update.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# 官方等价实现（zotero-plugin-dev 维护，含 Issue/PR 发布通知）：
+#   jobs:
+#     create-release:
+#       uses: zotero-plugin-dev/workflows/.github/workflows/release-plugin.yml@main
+#       with:
+#         build: "npm run build"
+#         release: "npm run release"
+#       secrets: inherit

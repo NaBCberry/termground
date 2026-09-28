@@ -1,0 +1,93 @@
+name: Release (Manual Bump)
+
+# 一键发布：在 Actions 页面填写版本号即可完成
+# 「改版本号 → 提交并打标签 → 构建 → 发布 Release」全流程。
+#
+# 注意：本工作流用 GITHUB_TOKEN 推送提交与标签，
+# 而 GITHUB_TOKEN 推送产生的事件不会触发其他工作流（GitHub 的防递归规则），
+# 所以这里的 Release 由本工作流自己发布，不会与 release.yml 重复。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "目标版本号，如 0.2.0 或 0.2.0-beta.1（不要带 v 前缀）"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-manual
+  cancel-in-progress: false
+
+jobs:
+  bump-and-publish:
+    name: Bump, tag and publish
+    runs-on: ubuntu-latest
+    steps:
+      # 仅允许在 main 分支上执行，避免在别的分支上打标签
+      - name: Ensure running on main
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_NAME" != "main" ]; then
+            echo "::error::请在 main 分支上运行本工作流（当前：$REF_NAME）。"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # changelog 由标签区间生成，必须取回完整历史与标签
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bump version in package.json
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+        run: npm version "$TARGET_VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Commit and push tag
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "版本号未变化，跳过提交。"
+          else
+            git commit -m "chore(publish): release v${TARGET_VERSION}"
+          fi
+          git tag "v${TARGET_VERSION}"
+          git push origin "HEAD:${REF_NAME}"
+          git push origin "v${TARGET_VERSION}"
+
+      # CI 环境下 zotero-plugin release 不改动 git，只创建 Release 并刷新 update.json
+      - name: Build and publish to GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ inputs.version }}
+        run: npm run release
+
+      - name: Write job summary
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "### 发布完成 ✅"
+            echo ""
+            echo "- 版本：\`${TARGET_VERSION}\`"
+            echo "- Release：https://github.com/${{ github.repository }}/releases/tag/v${TARGET_VERSION}"
+            echo "- 更新清单：https://github.com/${{ github.repository }}/releases/download/release/update.json"
+          } >> "$GITHUB_STEP_SUMMARY"
