@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet href="chrome://termground/content/manager.css"
+type="text/css"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN">
+  <head>
+    <title>TermGround · 术语库</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap topbar-in">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">TG</span>
+          <span class="wordmark">TermGround</span>
+        </div>
+
+        <nav class="nav" role="tablist" aria-label="术语库视图">
+          <button
+            role="tab"
+            id="tab-pending"
+            aria-controls="view-pending"
+            aria-selected="true"
+            data-view="pending"
+            type="button"
+          >
+            <span class="lbl">待确认</span
+            ><span class="n" data-count="pending">0</span>
+          </button>
+          <button
+            role="tab"
+            id="tab-terms"
+            aria-controls="view-terms"
+            aria-selected="false"
+            data-view="terms"
+            type="button"
+          >
+            <span class="lbl">术语库</span
+            ><span class="n" data-count="terms">0</span>
+          </button>
+          <button
+            role="tab"
+            id="tab-docs"
+            aria-controls="view-docs"
+            aria-selected="false"
+            data-view="docs"
+            type="button"
+          >
+            <span class="lbl">文献</span
+            ><span class="n" data-count="docs">0</span>
+          </button>
+        </nav>
+
+        <div class="search">
+          <input
+            id="q"
+            type="search"
+            placeholder="搜索术语（中英均可）"
+            aria-label="搜索术语"
+          />
+          <span class="kbd-hint kbd" aria-hidden="true">Ctrl K</span>
+        </div>
+
+        <div class="top-actions">
+          <button
+            class="icon-btn"
+            id="theme"
+            type="button"
+            aria-label="切换主题"
+            title="切换主题"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              aria-hidden="true"
+            >
+              <circle cx="8" cy="8" r="3.2"></circle>
+              <path
+                d="M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4"
+                stroke-linecap="round"
+              ></path>
+            </svg>
+          </button>
+          <button class="btn btn-primary" id="export" type="button">
+            导出术语表
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="pipe">
+      <div class="wrap pipe-in">
+        <div class="pipe-stages">
+          <div class="stage stage-extract">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="t-label">抽取</span>
+            <span class="value num" data-count="docs">0</span>
+            <span class="unit">篇文献</span>
+          </div>
+          <span class="sep" aria-hidden="true">›</span>
+          <div class="stage stage-review">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="t-label">确认</span>
+            <span class="value num is-focus" data-count="pending">0</span>
+            <span class="unit">待办</span>
+          </div>
+          <span class="sep" aria-hidden="true">›</span>
+          <div class="stage stage-export">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="t-label">导出</span>
+            <span class="value num" data-count="terms">0</span>
+            <span class="unit">术语对</span>
+          </div>
+        </div>
+        <div class="pipe-meta">
+          <span class="t-cap"
+            >证据 <span class="num" data-count="evidence">0</span></span
+          >
+          <span class="t-cap"
+            >verified <span class="num" data-count="verified">0</span></span
+          >
+          <span class="t-cap"
+            >漂移 <span class="num" id="drift-count">0</span></span
+          >
+        </div>
+      </div>
+    </div>
+
+    <main class="wrap">
+      <!-- ============ 待确认 ============ -->
+      <section
+        class="view"
+        id="view-pending"
+        role="tabpanel"
+        aria-labelledby="tab-pending"
+      >
+        <div class="view-head">
+          <h1 class="t-display">待确认候选</h1>
+          <p class="t-body lede">
+            引擎提出候选，入库由人确认。改写过的译法会降为
+            <span class="num">suggested</span
+            >（human_review）——原始引文不再逐字支撑，可信度必须看得见。
+          </p>
+        </div>
+        <div class="bulk">
+          <div class="t-cap" id="pending-bulk"></div>
+          <button
+            class="btn btn-ghost btn-compact"
+            id="reject-low"
+            type="button"
+          >
+            批量驳回低分候选
+          </button>
+        </div>
+        <div class="stack" id="pending-list"></div>
+      </section>
+
+      <!-- ============ 术语库 ============ -->
+      <section
+        class="view"
+        id="view-terms"
+        role="tabpanel"
+        aria-labelledby="tab-terms"
+        hidden="hidden"
+      >
+        <div class="view-head">
+          <h1 class="t-display">术语库</h1>
+          <p class="t-body lede">
+            每条术语对都能追到原文出处。同一中文概念出现多种英文写法时并列展示，工具不替你选。
+          </p>
+        </div>
+        <div class="toolbar">
+          <button
+            class="btn btn-ghost btn-compact"
+            id="drift-toggle"
+            type="button"
+            aria-pressed="false"
+          >
+            漂移分组视图
+          </button>
+          <span class="count" id="terms-count"></span>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">英文</th>
+                <th scope="col">中文</th>
+                <th scope="col">状态</th>
+                <th scope="col">来源</th>
+                <th scope="col">证据</th>
+              </tr>
+            </thead>
+            <tbody id="terms-body"></tbody>
+          </table>
+        </div>
+        <div id="terms-empty"></div>
+      </section>
+
+      <!-- ============ 文献 ============ -->
+      <section
+        class="view"
+        id="view-docs"
+        role="tabpanel"
+        aria-labelledby="tab-docs"
+        hidden="hidden"
+      >
+        <div class="view-head">
+          <h1 class="t-display">文献</h1>
+          <p class="t-body lede">
+            已摄取的文献，以及各自贡献的术语对与证据量。
+          </p>
+        </div>
+        <div class="stack" id="docs-list"></div>
+        <div id="docs-empty"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-in">
+        <div class="hints" id="hints">
+          <span class="h"><span class="kbd">Enter</span> 确认并下一条</span>
+          <span class="h"><span class="kbd">R</span> 驳回</span>
+          <span class="h"><span class="kbd">S</span> 跳过</span>
+        </div>
+        <span class="right" id="footer-right"></span>
+      </div>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

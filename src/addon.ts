@@ -2,6 +2,7 @@ import { config } from "../package.json";
 import { ColumnOptions, DialogHelper } from "zotero-plugin-toolkit";
 import hooks from "./hooks";
 import { createZToolkit } from "./utils/ztoolkit";
+import type { ManagerApi } from "./modules/managerWindow";
 
 class Addon {
   public data: {
@@ -24,7 +25,10 @@ class Addon {
   // Lifecycle hooks
   public hooks: typeof hooks;
   // APIs
-  public api: object;
+  public api: {
+    /** Data surface for the term-base manager window (manager.js). */
+    manager?: ManagerApi;
+  };
 
   constructor() {
     this.data = {

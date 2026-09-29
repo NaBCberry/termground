@@ -358,6 +358,19 @@ export class TermStore {
     }
   }
 
+  /**
+   * Undo a rejection, e.g. the undo action in the manager window.
+   *
+   * This is a deliberate human action and does not weaken the guard in
+   * addPending: automatic re-encounters still skip rejected candidates.
+   */
+  reopenPending(id: string): boolean {
+    const target = this.data.pending.find((item) => item.id === id);
+    if (!target || target.status !== "rejected") return false;
+    target.status = "open";
+    return true;
+  }
+
   counts(): {
     pairs: number;
     evidence: number;

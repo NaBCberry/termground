@@ -1,14 +1,16 @@
 /**
- * The plugin's user-facing surface: two item-menu commands.
+ * The plugin's item-menu surface: extract into the term base, and open the
+ * manager window where review actually happens.
  *
- * Kept deliberately small for now — extraction is the feature under test, so
- * the UI only needs to trigger it and report what happened.
+ * Review used to be a modal confirmEx loop; it retired when the manager
+ * window landed — decisions are one-per-candidate and need the full quote
+ * plus edit affordances, which the window provides non-modally.
  */
 
 import { getString } from "../utils/locale";
-import { PROMOTE_SCORE } from "./termExtract.ts";
 import { growFromItems } from "./termPipeline.ts";
-import { TermStore, type PendingCandidate } from "./termStore.ts";
+import { TermStore } from "./termStore.ts";
+import { openManagerWindow, refreshManagerWindows } from "./managerWindow.ts";
 
 /** Only one extraction at a time; repeated clicks would otherwise pile up. */
 let running = false;
@@ -23,7 +25,10 @@ function popup(closeTime: number) {
   });
 }
 
-function notify(text: string, type: "default" | "success" | "fail" = "default") {
+function notify(
+  text: string,
+  type: "default" | "success" | "fail" = "default",
+) {
   popup(6000).createLine({ text, type, progress: 100 }).show();
 }
 
@@ -31,54 +36,6 @@ function notify(text: string, type: "default" | "success" | "fail" = "default") 
 function shortError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.length > 90 ? `${message.slice(0, 90)}…` : message;
-}
-
-interface PromptService {
-  BUTTON_POS_0: number;
-  BUTTON_POS_1: number;
-  BUTTON_POS_2: number;
-  BUTTON_TITLE_IS_STRING: number;
-  confirmEx(
-    parent: Window | null,
-    title: string,
-    text: string,
-    flags: number,
-    button0: string,
-    button1: string,
-    button2: string,
-    checkLabel: string | null,
-    checkValue: { value: boolean },
-  ): number;
-}
-
-function promptService(): PromptService {
-  return ztoolkit.getGlobal("Services").prompt as PromptService;
-}
-
-/** How many candidates one review session will walk through. */
-const MAX_REVIEW_PER_RUN = 40;
-
-function reviewText(entry: PendingCandidate, index: number, total: number): string {
-  const origin = entry.itemTitle
-    ? `${entry.itemTitle}${entry.page ? ` p.${entry.page}` : ""}`
-    : "来源未知";
-  const quote = entry.quote
-    ? entry.quote.length > 110
-      ? `${entry.quote.slice(0, 110)}…`
-      : entry.quote
-    : "";
-  return [
-    `候选 ${index} / ${total}`,
-    "",
-    `中文：${entry.zh}`,
-    `英文：${entry.en || "（缺失，入库时会询问）"}`,
-    `出处：${origin}${entry.section ? ` · ${entry.section}` : ""}`,
-    quote ? `原文：${quote}` : "",
-    "",
-    `抽取方式 ${entry.method} · 置信度 ${entry.score.toFixed(2)}`,
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
 }
 
 function selectedItems(): Zotero.Item[] {
@@ -99,20 +56,11 @@ export function registerMenus(): void {
   });
   ztoolkit.Menu.register("item", {
     tag: "menuitem",
-    id: "termground-itemmenu-stats",
-    label: getString("menuitem-stats"),
+    id: "termground-itemmenu-manager",
+    label: getString("menuitem-manager"),
     icon,
     commandListener: () => {
-      void showStats();
-    },
-  });
-  ztoolkit.Menu.register("item", {
-    tag: "menuitem",
-    id: "termground-itemmenu-review",
-    label: getString("menuitem-review"),
-    icon,
-    commandListener: () => {
-      void reviewPending();
+      openManagerWindow();
     },
   });
 }
@@ -137,7 +85,9 @@ export async function extractSelectedItems(): Promise<void> {
   try {
     const store = await TermStore.load();
     const report = await growFromItems(items, store, (title) => {
-      progress.changeLine({ text: `${getString("progress-reading")} ${title}` });
+      progress.changeLine({
+        text: `${getString("progress-reading")} ${title}`,
+      });
     });
 
     progress.changeLine({
@@ -147,6 +97,9 @@ export async function extractSelectedItems(): Promise<void> {
     });
     progress.startCloseTimer(8000);
     ztoolkit.log("termground extract report", report);
+    // The manager window holds a rendered copy of the old store; tell it to
+    // reload so its counts and candidate list match what was just ingested.
+    refreshManagerWindows();
   } catch (error) {
     progress.changeLine({
       text: `提取失败：${shortError(error)}`,
@@ -157,100 +110,11 @@ export async function extractSelectedItems(): Promise<void> {
     // An Error object serialises to {} in the debug log, which is exactly
     // useless when the failure is the thing you need to read. Log the message.
     const detail =
-      error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error);
     ztoolkit.log(`termground extract failed: ${detail}`, error);
   } finally {
     running = false;
   }
-}
-
-export async function showStats(): Promise<void> {
-  const store = await TermStore.load();
-  const counts = store.counts();
-  notify(
-    `术语对 ${counts.pairs} · 证据 ${counts.evidence} · 文献 ${counts.items} · 待确认 ${counts.pending} · verified ${counts.verified}`,
-    "success",
-  );
-  ztoolkit.log("termground store", store.path(), counts);
-}
-
-/**
- * Walk the pending list one candidate at a time.
- *
- * A modal loop rather than a table window: the decisions are one-per-item and
- * the reviewer needs the full quote in front of them, which a narrow table cell
- * cannot show.
- */
-export async function reviewPending(): Promise<void> {
-  const store = await TermStore.load();
-  const open = store.openPending();
-  if (!open.length) {
-    notify(getString("review-none"));
-    return;
-  }
-
-  const win = Zotero.getMainWindow();
-  const prompt = promptService();
-  const flags =
-    prompt.BUTTON_POS_0 * prompt.BUTTON_TITLE_IS_STRING +
-    prompt.BUTTON_POS_1 * prompt.BUTTON_TITLE_IS_STRING +
-    prompt.BUTTON_POS_2 * prompt.BUTTON_TITLE_IS_STRING;
-
-  const total = Math.min(open.length, MAX_REVIEW_PER_RUN);
-  let accepted = 0;
-  let rejected = 0;
-
-  for (let index = 0; index < total; index++) {
-    const entry = open[index];
-    const stopAfter = { value: false };
-    const choice = prompt.confirmEx(
-      win,
-      addon.data.config.addonName,
-      reviewText(entry, index + 1, total),
-      flags,
-      getString("review-accept"),
-      getString("review-reject"),
-      getString("review-skip"),
-      getString("review-stop-after"),
-      stopAfter,
-    );
-
-    if (choice === 0) {
-      const edited: { zh?: string; en?: string } = {};
-      // A candidate that was not auto-promoted usually failed on its Chinese
-      // boundary, so that is the field worth correcting first.
-      if (entry.score < PROMOTE_SCORE) {
-        const zh = win.prompt(getString("review-fix-chinese"), entry.zh);
-        if (zh === null) {
-          if (stopAfter.value) break;
-          continue;
-        }
-        if (zh.trim()) edited.zh = zh.trim();
-      }
-      if (!entry.en) {
-        const en = win.prompt(getString("review-enter-english"), "");
-        if (en === null) {
-          if (stopAfter.value) break;
-          continue;
-        }
-        if (!en.trim()) {
-          if (stopAfter.value) break;
-          continue;
-        }
-        edited.en = en.trim();
-      }
-      if (store.acceptPending(entry, edited)) accepted++;
-    } else if (choice === 1) {
-      store.rejectPending(entry);
-      rejected++;
-    }
-
-    if (stopAfter.value) break;
-  }
-
-  await store.save();
-  notify(
-    `本次确认 ${accepted} 条，拒绝 ${rejected} 条，剩余待确认 ${store.pendingCounts().open} 条`,
-    "success",
-  );
 }

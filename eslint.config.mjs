@@ -12,5 +12,14 @@ export default zotero({
         "@typescript-eslint/no-unused-vars": "off",
       },
     },
+    {
+      // Window scripts run inside a Zotero chrome window, where document,
+      // window, Zotero and timers are injected globals — same situation as
+      // bootstrap.js/prefs.js, which the base config exempts the same way.
+      files: ["addon/content/**/*.js"],
+      rules: {
+        "no-undef": "off",
+      },
+    },
   ],
 });

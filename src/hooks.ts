@@ -2,6 +2,11 @@ import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
 import { registerMenus } from "./modules/terminology";
+import {
+  closeManagerWindow,
+  registerManagerMenus,
+  setupManagerWindow,
+} from "./modules/managerWindow";
 
 async function onStartup() {
   await Promise.all([
@@ -11,6 +16,7 @@ async function onStartup() {
   ]);
 
   initLocale();
+  setupManagerWindow();
 
   Zotero.PreferencePanes.register({
     pluginID: addon.data.config.addonID,
@@ -37,6 +43,7 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   );
 
   registerMenus();
+  registerManagerMenus();
 
   ztoolkit.log(getString("startup-finish"));
 }
@@ -49,6 +56,7 @@ async function onMainWindowUnload(_win: Window): Promise<void> {
 function onShutdown(): void {
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
+  closeManagerWindow();
   // Remove addon object
   addon.data.alive = false;
   // @ts-expect-error - Plugin instance is not typed
@@ -72,4 +80,3 @@ export default {
   onMainWindowUnload,
   onPrefsEvent,
 };
-
