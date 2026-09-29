@@ -463,6 +463,10 @@
     current: 0,
     docFilter: null,
     expanded: {},
+    /* 正在行内编辑的术语 id；null 表示没有 */
+    editing: null,
+    /* 是否在表格顶部显示「新建术语」那一行 */
+    creating: false,
     loading: false,
     loadError: null,
     errorKind: null,
@@ -492,8 +496,13 @@
       });
   }
 
+  /*
+   * 证据优先按稳定 ID 关联。术语被人工改写之后，证据行上留的还是改写前的
+   * 中英文，按文本比对会当场失联；只有缺 termId 的老数据才退回文本比对。
+   */
   function evidenceForPair(pair) {
     return STORE.evidence.filter(function (ev) {
+      if (ev.termId && pair.id) return ev.termId === pair.id;
       return ev.en === pair.en && ev.zh === pair.zh;
     });
   }
@@ -891,11 +900,133 @@
       .concat([drift]);
   }
 
+  /* ---------------- 渲染：术语行的人工编辑 ---------------- */
+
+  /** 行内编辑态：中英文两格变成输入框。 */
+  function termEditCells(pair) {
+    return [
+      el("td", { class: "cell-en" }, [
+        el("input", {
+          class: "input",
+          type: "text",
+          value: pair.en == null ? "" : String(pair.en),
+          "aria-label": "英文术语",
+          "data-term-field": "en",
+        }),
+      ]),
+      el("td", { class: "cell-zh" }, [
+        el("input", {
+          class: "input",
+          type: "text",
+          value: pair.zh == null ? "" : String(pair.zh),
+          "aria-label": "中文译名",
+          "data-term-field": "zh",
+        }),
+      ]),
+    ];
+  }
+
+  function termActionCell(pair) {
+    if (STATE.editing === pair.id) {
+      return [
+        el(
+          "button",
+          {
+            class: "btn btn-primary btn-compact",
+            type: "button",
+            "data-term-action": "save",
+          },
+          "保存",
+        ),
+        el(
+          "button",
+          {
+            class: "btn btn-quiet btn-compact",
+            type: "button",
+            "data-term-action": "cancel",
+          },
+          "取消",
+        ),
+      ];
+    }
+    return [
+      el(
+        "button",
+        {
+          class: "btn btn-quiet btn-compact",
+          type: "button",
+          "data-term-action": "edit",
+        },
+        "编辑",
+      ),
+      el(
+        "button",
+        {
+          class: "btn btn-quiet btn-compact",
+          type: "button",
+          "data-term-action": "delete",
+        },
+        "删除",
+      ),
+    ];
+  }
+
+  /** 表格顶部那一行「新建术语」。 */
+  function termCreateRow() {
+    if (!STATE.creating) return [];
+    return [
+      el("tr", { class: "row", "data-term": "new" }, [
+        el("td", { class: "cell-en" }, [
+          el("input", {
+            class: "input",
+            type: "text",
+            placeholder: "英文术语",
+            "aria-label": "英文术语",
+            "data-term-field": "en",
+          }),
+        ]),
+        el("td", { class: "cell-zh" }, [
+          el("input", {
+            class: "input",
+            type: "text",
+            placeholder: "中文译名",
+            "aria-label": "中文译名",
+            "data-term-field": "zh",
+          }),
+        ]),
+        el("td", null, statusBadge("suggested")),
+        el("td", null, [span("t-cap num", "human_review")]),
+        el("td", null, [span("t-cap", "—")]),
+        el("td", { style: "white-space:nowrap" }, [
+          el(
+            "button",
+            {
+              class: "btn btn-primary btn-compact",
+              type: "button",
+              "data-term-action": "create",
+            },
+            "保存",
+          ),
+          el(
+            "button",
+            {
+              class: "btn btn-quiet btn-compact",
+              type: "button",
+              "data-term-action": "create-cancel",
+            },
+            "取消",
+          ),
+        ]),
+      ]),
+    ];
+  }
+
   function termRowNodes(list) {
     var out = [];
     list.forEach(function (pair, i) {
       var key = pair.en + "|" + pair.zh;
       var open = !!STATE.expanded[key];
+      var editing = STATE.editing === pair.id;
       var evCount = evidenceForPair(pair).length;
       var last = i === list.length - 1 && !open;
       var expandCell = evCount
@@ -914,20 +1045,30 @@
       var role = span("t-cap", String(pair.role));
       role.setAttribute("style", "margin-right:6px");
 
+      var identity = editing
+        ? termEditCells(pair)
+        : [
+            el("td", { class: "cell-en" }, pair.en),
+            el("td", { class: "cell-zh" }, pair.zh),
+          ];
+
       out.push(
-        el("tr", { class: "row" + (last ? " is-last" : "") }, [
-          el("td", { class: "cell-en" }, pair.en),
-          el("td", { class: "cell-zh" }, pair.zh),
-          el("td", null, [role, statusBadge(pair.status)]),
-          el("td", null, [span("t-cap num", String(pair.source))]),
-          el("td", null, [expandCell]),
-        ]),
+        el(
+          "tr",
+          { class: "row" + (last ? " is-last" : ""), "data-term": pair.id },
+          identity.concat([
+            el("td", null, [role, statusBadge(pair.status)]),
+            el("td", null, [span("t-cap num", String(pair.source))]),
+            el("td", null, [expandCell]),
+            el("td", { style: "white-space:nowrap" }, termActionCell(pair)),
+          ]),
+        ),
       );
 
       if (open) {
         out.push(
           el("tr", null, [
-            el("td", { class: "evidence", colspan: "5" }, evidenceNodes(pair)),
+            el("td", { class: "evidence", colspan: "6" }, evidenceNodes(pair)),
           ]),
         );
       }
@@ -960,7 +1101,7 @@
       );
     });
 
-    if (!STORE.pairs.length) {
+    if (!STORE.pairs.length && !STATE.creating) {
       body.replaceChildren();
       if (count) count.textContent = "";
       fill(empty, [
@@ -971,7 +1112,7 @@
       ]);
       return;
     }
-    if (!list.length) {
+    if (!list.length && !STATE.creating) {
       body.replaceChildren();
       if (count) count.textContent = "共 " + STORE.pairs.length + " 条术语对";
       fill(empty, [
@@ -998,7 +1139,7 @@
         }
         groups[pair.zh].push(pair);
       });
-      var nodes = [];
+      var nodes = termCreateRow();
       order.forEach(function (zh) {
         var items = groups[zh];
         var warn =
@@ -1007,7 +1148,7 @@
             : span("pill pill-neutral", "单一写法");
         nodes.push(
           el("tr", null, [
-            el("td", { class: "group-head", colspan: "5" }, [
+            el("td", { class: "group-head", colspan: "6" }, [
               span("zh", zh),
               span("sub", items.length + " 个英文术语对").setAttribute(
                 "style",
@@ -1031,7 +1172,7 @@
           " 条";
       }
     } else {
-      fill(body, termRowNodes(list));
+      fill(body, termCreateRow().concat(termRowNodes(list)));
       if (count) {
         count.textContent =
           "共 " + STORE.pairs.length + " 条 · 显示 " + list.length + " 条";
@@ -1366,6 +1507,122 @@
       .catch(function (error) {
         toast("批量驳回失败：" + shortError(error));
       });
+  }
+
+  /* ---------------- 事件：术语库人工编辑 ---------------- */
+
+  function termFieldValue(row, name) {
+    var node = row ? $('[data-term-field="' + name + '"]', row) : null;
+    return node ? String(node.value || "").trim() : "";
+  }
+
+  function focusTermField(selector) {
+    var node = $(selector);
+    if (node && node.focus) node.focus();
+  }
+
+  function onCreateTerm() {
+    var row = $('[data-term="new"]');
+    var en = termFieldValue(row, "en");
+    var zh = termFieldValue(row, "zh");
+    if (!en || !zh) {
+      toast("英文术语和中文译名都要填");
+      return;
+    }
+    api
+      .create({ en: en, zh: zh })
+      .then(function (pair) {
+        STATE.creating = false;
+        toast("已新建「" + pair.zh + " / " + pair.en + "」· 写入前已自动备份");
+        return refresh();
+      })
+      .catch(function (error) {
+        toast("新建失败：" + shortError(error));
+      });
+  }
+
+  function onSaveTerm(id, row) {
+    var en = termFieldValue(row, "en");
+    var zh = termFieldValue(row, "zh");
+    if (!en || !zh) {
+      toast("英文术语和中文译名都要填");
+      return;
+    }
+    api
+      .update(id, { en: en, zh: zh })
+      .then(function () {
+        STATE.editing = null;
+        toast("已保存「" + zh + " / " + en + "」· 写入前已自动备份");
+        return refresh();
+      })
+      .catch(function (error) {
+        toast("保存失败：" + shortError(error));
+      });
+  }
+
+  function onDeleteTerm(id) {
+    var pair = STORE.pairs.filter(function (item) {
+      return item.id === id;
+    })[0];
+    var label = pair ? "「" + pair.zh + " / " + pair.en + "」" : "该术语";
+    api
+      .remove([id])
+      .then(function (result) {
+        toast(
+          "已删除 " + label + "（连带证据 " + result.evidence + " 条）",
+          "撤销",
+          function () {
+            api
+              .restore(result.undo)
+              .then(function () {
+                return refresh();
+              })
+              .then(function () {
+                toast("已恢复 " + label);
+              })
+              .catch(function (error) {
+                toast("撤销失败：" + shortError(error));
+              });
+          },
+        );
+        return refresh();
+      })
+      .catch(function (error) {
+        toast("删除失败：" + shortError(error));
+      });
+  }
+
+  function onTermAction(action, id, row) {
+    if (action === "create") {
+      onCreateTerm();
+      return;
+    }
+    if (action === "create-cancel") {
+      STATE.creating = false;
+      renderTerms();
+      return;
+    }
+    /* 其余动作都需要一条具体术语；拿不到 id 就什么都不做 */
+    if (!id) return;
+    if (action === "edit") {
+      STATE.editing = id;
+      STATE.creating = false;
+      renderTerms();
+      focusTermField('[data-term="' + id + '"] [data-term-field="en"]');
+      return;
+    }
+    if (action === "cancel") {
+      STATE.editing = null;
+      renderTerms();
+      return;
+    }
+    if (action === "save") {
+      onSaveTerm(id, row);
+      return;
+    }
+    if (action === "delete") {
+      onDeleteTerm(id);
+    }
   }
 
   /**
@@ -2079,6 +2336,26 @@
         setView("terms");
         renderTerms();
         toast("已按《" + itemTitle(STATE.docFilter) + "》过滤术语库");
+        return;
+      }
+
+      var termAction = target.closest("[data-term-action]");
+      if (termAction) {
+        var termRow = termAction.closest("[data-term]");
+        onTermAction(
+          termAction.getAttribute("data-term-action"),
+          termRow ? termRow.getAttribute("data-term") : null,
+          termRow,
+        );
+        return;
+      }
+
+      if (target.closest("#term-new")) {
+        STATE.creating = true;
+        STATE.editing = null;
+        setView("terms");
+        renderTerms();
+        focusTermField('[data-term="new"] [data-term-field="en"]');
         return;
       }
 

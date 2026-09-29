@@ -39,7 +39,12 @@ async function withStore<T>(
 ): Promise<T> {
   const store = await TermStore.load();
   const result = await run(store);
-  await store.save();
+  /*
+   * Every mutation goes through here, so this is also where the automatic
+   * backup lives: createBackup copies the store as it was before the write
+   * and keeps the newest MAX_BACKUPS copies next to it.
+   */
+  await store.save({ backup: true });
   return result;
 }
 
@@ -91,6 +96,52 @@ function createManagerApi() {
     /** Undo a rejection — a deliberate human action, not auto-resurrection. */
     reopen: async (id: string): Promise<boolean> =>
       withStore((store) => store.reopenPending(id)),
+
+    /*
+     * Manual term editing. Unlike a candidate these have no extracted quote
+     * behind them, so the data layer marks them human_review and each write
+     * goes through withStore — which is also what leaves the backup.
+     */
+    create: async (input: { en: string; zh: string }): Promise<TermPair> =>
+      withStore((store) => store.createTerm(input)),
+
+    update: async (
+      id: string,
+      input: { en: string; zh: string },
+    ): Promise<TermPair> => withStore((store) => store.updateTerm(id, input)),
+
+    /**
+     * Delete terms and hand back everything needed to undo it.
+     *
+     * The undo payload is captured on this side rather than reconstructed by
+     * the window: once a term is edited its evidence rows still carry the old
+     * text, so only the store can say which evidence belonged to which term.
+     */
+    remove: async (
+      ids: string[],
+    ): Promise<{
+      pairs: number;
+      evidence: number;
+      undo: { pairs: TermPair[]; evidence: Evidence[] };
+    }> =>
+      withStore((store) => {
+        const wanted = new Set(ids);
+        const undo = {
+          pairs: store.data.pairs.filter((pair) => wanted.has(pair.id)),
+          evidence: ids.flatMap((id) => store.evidenceForTerm(id)),
+        };
+        return { ...store.deleteTerms(ids), undo };
+      }),
+
+    /** Undo the last delete — same deliberate-action rule as reopen. */
+    restore: async (undo: {
+      pairs: TermPair[];
+      evidence: Evidence[];
+    }): Promise<number> =>
+      withStore((store) => {
+        store.restoreDeleted(undo.pairs, undo.evidence);
+        return undo.pairs.length;
+      }),
 
     selectItem: (itemKey: string): boolean => {
       const pane = Zotero.getActiveZoteroPane();
