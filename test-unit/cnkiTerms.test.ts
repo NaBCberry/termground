@@ -55,10 +55,72 @@ test("CNKI restoration enforces the stored Chinese translation", () => {
     pair("support vector machine", "支持向量机"),
   ]);
   const translated = `我们使用一个${protectedText.text.match(/\[\[TG0000\]\].+$/)![0]}`;
-  const restored = restoreCnkiTerms(translated, protectedText.terms);
+  const { text, report } = restoreCnkiTerms(translated, protectedText.terms);
 
-  assert.equal(restored, "我们使用一个支持向量机.");
-  assert.doesNotMatch(restored, /TG0000/);
+  assert.equal(text, "我们使用一个支持向量机.");
+  assert.doesNotMatch(text, /TG0000/);
+  assert.deepEqual(report, { restored: 1, lost: 0, lostTerms: [] });
+});
+
+test("CNKI restoration still enforces a marker the service rewrote but kept paired", () => {
+  const protectedText = protectCnkiTerms("A support vector machine.", [
+    pair("support vector machine", "支持向量机"),
+  ]);
+  // 翻译服务把标记里的中文换成了自己的说法，还给标记加了空格——只要首尾标记
+  // 还在，整段就该被换回术语库的译名，而不是把引擎的说法留在译文里。
+  const translated = "一个 [[ TG0000 ]] 支持向量机 [[ / TG0000 ]] 。";
+  const { text, report } = restoreCnkiTerms(translated, protectedText.terms);
+
+  assert.equal(text, "一个 支持向量机 。");
+  assert.equal(report.restored, 1);
+  assert.equal(report.lost, 0);
+});
+
+test("CNKI restoration reports a term whose markers were swallowed", () => {
+  const protectedText = protectCnkiTerms("A support vector machine.", [
+    pair("support vector machine", "支持向量机"),
+  ]);
+  const { text, report } = restoreCnkiTerms(
+    "一个支持向量机。",
+    protectedText.terms,
+  );
+
+  assert.equal(text, "一个支持向量机。");
+  assert.equal(report.restored, 0);
+  assert.equal(report.lost, 1);
+  assert.deepEqual(report.lostTerms, ["support vector machine"]);
+});
+
+test("CNKI restoration cleans a half-eaten marker and counts it as lost", () => {
+  const protectedText = protectCnkiTerms("A support vector machine.", [
+    pair("support vector machine", "支持向量机"),
+  ]);
+  // 只剩开始标记：无法确认引擎用了哪个译名，必须算 lost，而且不能把标记漏进界面。
+  const { text, report } = restoreCnkiTerms(
+    "一个[[TG0000]]支持向量机。",
+    protectedText.terms,
+  );
+
+  assert.equal(text, "一个支持向量机。");
+  assert.doesNotMatch(text, /\[\[/);
+  assert.equal(report.lost, 1);
+  assert.deepEqual(report.lostTerms, ["support vector machine"]);
+});
+
+test("CNKI restoration splits the count when only some markers survive", () => {
+  const protectedText = protectCnkiTerms("machine learning and deep learning", [
+    pair("machine learning", "机器学习"),
+    pair("deep learning", "深度学习"),
+  ]);
+  const { text, report } = restoreCnkiTerms(
+    "[[TG0000]]机器学习[[/TG0000]]与深度学习",
+    protectedText.terms,
+  );
+
+  assert.equal(text, "机器学习与深度学习");
+  assert.equal(report.restored, 1);
+  assert.equal(report.lost, 1);
+  assert.deepEqual(report.lostTerms, ["deep learning"]);
 });
 
 test("human review wins duplicate English mappings", () => {

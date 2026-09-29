@@ -11,6 +11,27 @@ export interface ProtectedText {
   terms: ProtectedTerm[];
 }
 
+/**
+ * What the post-translation restore actually managed to enforce.
+ *
+ * Protection can only wrap a term; whether the translation service keeps the
+ * marker pair intact is out of our hands. `lost` is the part that used to be
+ * invisible — those terms fall back to whatever wording the engine chose.
+ */
+export interface RestoreReport {
+  /** 标记成对、已被替换成术语库指定译名的条数 */
+  restored: number;
+  /** 标记被拆散或吞掉、只能清理残标记的条数 */
+  lost: number;
+  /** lost 对应的英文术语，供提示里直接列出 */
+  lostTerms: string[];
+}
+
+export interface RestoredText {
+  text: string;
+  report: RestoreReport;
+}
+
 function priority(pair: TermPair): number {
   if (pair.source === "human_review") return 3;
   if (pair.status === "verified") return 2;
@@ -124,21 +145,48 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Restore every intact marker and remove any harmless leftover marker tags. */
+/**
+ * Restore every intact marker and remove any harmless leftover marker tags.
+ *
+ * Also counts what it could not enforce. A term whose marker pair did not
+ * survive translation keeps the engine's own wording, and the caller needs that
+ * number to say so instead of reporting success for the whole batch.
+ */
 export function restoreCnkiTerms(
   translated: string,
   terms: ProtectedTerm[],
-): string {
+): RestoredText {
   let result = translated;
+  const lostTerms: string[] = [];
+  let restored = 0;
+
   for (const term of terms) {
     const tag = escapeRegExp(term.tag);
     const wrapped = new RegExp(
       `\\[\\[\\s*${tag}\\s*\\]\\][\\s\\S]*?\\[\\[\\s*\\/\\s*${tag}\\s*\\]\\]`,
       "gi",
     );
-    result = result.replace(wrapped, () => term.target);
+    /*
+     * test() on a /g/ regex advances lastIndex, so rewind it before the
+     * replace() below — otherwise that replace starts mid-string and misses the
+     * very marker test() just found.
+     */
+    const intact = wrapped.test(result);
+    wrapped.lastIndex = 0;
+    if (intact) {
+      result = result.replace(wrapped, () => term.target);
+      restored++;
+    } else {
+      lostTerms.push(term.source);
+    }
   }
+
   // If CNKI preserved the Chinese text but separated a tag from its mate,
   // remove the tag rather than leaking implementation markers into the UI.
-  return result.replace(/\[\[\s*\/?\s*TG\d{4}\s*\]\]/gi, "");
+  result = result.replace(/\[\[\s*\/?\s*TG\d{4}\s*\]\]/gi, "");
+
+  return {
+    text: result,
+    report: { restored, lost: lostTerms.length, lostTerms },
+  };
 }
