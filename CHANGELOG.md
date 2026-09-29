@@ -41,7 +41,7 @@
 ### Fixed
 
 - 声明 pnpm 版本并提交锁文件，修复 GitHub Actions 的 `Setup JS` 失败。
-- 将仓库、问题反馈和主页地址更新为 `nickdu32/termground`。
+- 补充仓库、问题反馈和主页元数据。
 
 ## 0.2.0 - 2026-09-28
 

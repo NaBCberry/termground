@@ -13,13 +13,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nickdu32/termground.git"
+    "url": "git+https://github.com/NaBCberry/termground.git"
   },
   "author": "NaBCberry",
   "bugs": {
-    "url": "https://github.com/nickdu32/termground/issues"
+    "url": "https://github.com/NaBCberry/termground/issues"
   },
-  "homepage": "https://github.com/nickdu32/termground#readme",
+  "homepage": "https://github.com/NaBCberry/termground#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",
