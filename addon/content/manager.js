@@ -903,12 +903,26 @@
   /* ---------------- 渲染：术语行的人工编辑 ---------------- */
 
   /*
+   * 行内编辑输入框的尺寸。
+   *
+   * 只读行里最高的元素是 28px 的 .btn-compact。输入框必须做到两件事，否则
+   * 点一下「编辑」整行——连带整张表格框——会被顶高一截：
+   *
+   * 1) 不比按钮高（height 26px < 28px）；
+   * 2) 脱离行内布局（display:block），别在单元格里生成一个带基线间隙的行盒。
+   *
+   * 这几个值与按钮高度是耦合的，所以写在建节点的地方，而不是散在样式表里。
+   */
+  var TERM_FIELD_STYLE =
+    "display:block;width:100%;height:26px;padding:3px 8px;font-size:13px";
+
+  /*
    * 行内编辑态：中英文两格变成输入框。
    *
    * size="1" 不是随手写的：文本输入框默认按 20 字符计算固有宽度，而固有宽度
    * 会计入表格列的最小内容宽度——两个这样的输入框足以把「英文」「中文」两列
-   * 顶宽，整张表跟着变形。归零固有宽度后，实际宽度完全由单元格加 CSS 的
-   * width:100% 决定。
+   * 顶宽，整张表跟着变形。归零固有宽度后，实际宽度完全由单元格加 width:100%
+   * 决定。
    */
   function termEditCells(pair) {
     return [
@@ -917,6 +931,7 @@
           class: "input",
           type: "text",
           size: "1",
+          style: TERM_FIELD_STYLE,
           value: pair.en == null ? "" : String(pair.en),
           "aria-label": "英文术语",
           "data-term-field": "en",
@@ -927,6 +942,7 @@
           class: "input",
           type: "text",
           size: "1",
+          style: TERM_FIELD_STYLE,
           value: pair.zh == null ? "" : String(pair.zh),
           "aria-label": "中文译名",
           "data-term-field": "zh",
@@ -990,6 +1006,7 @@
             class: "input",
             type: "text",
             size: "1",
+            style: TERM_FIELD_STYLE,
             placeholder: "英文术语",
             "aria-label": "英文术语",
             "data-term-field": "en",
@@ -1000,6 +1017,7 @@
             class: "input",
             type: "text",
             size: "1",
+            style: TERM_FIELD_STYLE,
             placeholder: "中文译名",
             "aria-label": "中文译名",
             "data-term-field": "zh",
