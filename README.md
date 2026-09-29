@@ -11,3 +11,5 @@ TermGround 是一个 [Zotero](https://www.zotero.org/) 插件：从你库里已�
 > 👁 Watch 本仓库，以及时收到修复或更新的通知。
 
 ## Features 特性
+
+正在编写中。。。
