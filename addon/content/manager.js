@@ -49,6 +49,34 @@
   var ZoteroRef = launchArgs.zotero || resolveGlobal("Zotero");
   var ServicesRef = launchArgs.services || resolveGlobal("Services");
 
+  /*
+   * 探测 window.arguments 到底长什么样：它可能是 undefined（宿主没填充）、
+   * 可能是死包装（取属性即抛），也可能只有部分键。这直接决定诊断文件路径
+   * 是否可用，所以启动 trace 里必须能看到真实结论。
+   */
+  var launchArgsProbe = (function () {
+    try {
+      if (typeof window === "undefined" || !window) return "no-window";
+      var args = window.arguments;
+      if (args === undefined) return "undefined";
+      if (args === null) return "null";
+      return (
+        "type=" +
+        Object.prototype.toString.call(args) +
+        " len=" +
+        args.length +
+        " keys=[" +
+        Object.keys(args).join(",") +
+        "] first=" +
+        {}.toString.call(args[0])
+      );
+    } catch (error) {
+      return (
+        "threw:" + (error && error.message ? error.message : String(error))
+      );
+    }
+  })();
+
   /** 开窗方传入的接口优先，其次从 Zotero 上的插件实例取。 */
   function resolveApi() {
     if (launchArgs.api && launchArgs.api.snapshot) {
@@ -1140,10 +1168,13 @@
   /**
    * 把诊断报告写入文件。
    *
-   * Zotero 的调试日志只留在错误控制台内存里，不落 .scaffold/logs 那种 .log
-   * 文件，剪贴板又可能拿不到——所以这里自己写文件，而且是开窗就自动写，
-   * 不用等人去点按钮。开窗方经 window.arguments 传候选路径（数组，按顺序
-   * 试）；一条都没写成时先弹框问路径，仍拿不到就只复制剪贴板。
+   * Zotero 的调试日志只留在错误控制台内存里，不写 .scaffold/logs 那种 .log
+   * 文件，剪贴板又可能拿不到——所以这里自己写文件，而且开窗就自动写，不等
+   * 人去点按钮。
+   *
+   * 路径按候选顺序试：开窗方经 window.arguments 传入的路径（首选），加上
+   * 本窗口 chrome:// URL 反推出来的插件目录（window.arguments 拿不到时的
+   * 兜底）。不弹框问用户——出故障时人只想看到结果，不想先回答一个问题。
    */
   function writeTextFile(path, textValue, append) {
     var io = ServicesRef && ServicesRef.IOUtils;
@@ -1163,35 +1194,40 @@
     throw new Error("没有可用的写文件接口");
   }
 
-  function diagnosticsCandidates() {
-    var given = launchArgs.diagnosticsPath;
-    if (typeof given === "string" && given) return [given];
-    if (Array.isArray(given)) return given.slice();
-    return [];
-  }
-
-  function writeDiagnosticsFile(textValue, append, askIfMissing) {
-    var candidates = diagnosticsCandidates();
-    if (!candidates.length && askIfMissing) {
-      trace(
-        "diagnostics: 开窗方未提供路径（launchArgs keys=" +
-          Object.keys(launchArgs).join(",") +
-          "），询问用户",
-      );
-      try {
-        var asked = window.prompt(
-          "诊断报告要写入哪个文件？留空则只复制到剪贴板。",
-          "termground-manager-diagnostics.txt",
-        );
-        if (asked) candidates = [asked];
-      } catch {
-        /* prompt 不可用则继续按失败处理 */
-      }
-    }
-    if (!candidates.length) {
+  /** 从 chrome://<ref>/content/manager.xhtml 反推插件目录下的诊断文件路径。 */
+  function fallbackDiagnosticsPath() {
+    try {
+      var href = String(window.location && window.location.href);
+      var marker = "/content/";
+      var at = href.lastIndexOf(marker);
+      if (at < 0) return null;
+      return href.slice(0, at + marker.length) + "manager-diagnostics.txt";
+    } catch {
       return null;
     }
+  }
 
+  function diagnosticsCandidates() {
+    var candidates = [];
+    var given = launchArgs.diagnosticsPath;
+    if (typeof given === "string" && given) {
+      candidates.push(given);
+    } else if (Array.isArray(given)) {
+      candidates = candidates.concat(given);
+    }
+    var fallback = fallbackDiagnosticsPath();
+    if (fallback && candidates.indexOf(fallback) < 0) {
+      candidates.push(fallback);
+    }
+    return candidates;
+  }
+
+  function writeDiagnosticsFile(textValue, append) {
+    var candidates = diagnosticsCandidates();
+    if (!candidates.length) {
+      trace("diagnostics: 没有任何可用路径（window.arguments 也没给）");
+      return null;
+    }
     for (var i = 0; i < candidates.length; i++) {
       try {
         var how = writeTextFile(candidates[i], textValue, append);
@@ -1210,7 +1246,7 @@
     var header =
       "\n===== " + new Date().toISOString() + " (" + why + ") =====\n";
     var report = header + diagnosticsText() + "\n";
-    var written = writeDiagnosticsFile(report, STATE.diagnosticsWritten, false);
+    var written = writeDiagnosticsFile(report, STATE.diagnosticsWritten);
     if (written) {
       STATE.diagnosticsWritten = true;
     }
@@ -1227,7 +1263,6 @@
     var written = writeDiagnosticsFile(
       "\n===== " + new Date().toISOString() + " (手动) =====\n" + report + "\n",
       STATE.diagnosticsWritten,
-      true,
     );
     if (written) {
       STATE.diagnosticsWritten = true;
@@ -1543,6 +1578,10 @@
         !!ServicesRef +
         " styleSheets=" +
         document.styleSheets.length,
+    );
+    trace("boot: window.arguments -> " + launchArgsProbe);
+    trace(
+      "boot: diagnostics candidates -> " + diagnosticsCandidates().join(" , "),
     );
 
     /* 开窗即自动写一份：这份文件不依赖点按钮，界面坏了也留得下线索 */
