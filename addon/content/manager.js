@@ -29,7 +29,65 @@
    * 所以先看开窗方传进来的 window.arguments，再逐条兜底。取不到就明确
    * 报错，绝不静默降级成空界面。
    */
-  var launchArgs = (window && window.arguments && window.arguments[0]) || {};
+  /**
+   * 宿主对象（api / Zotero / Services / 诊断路径）的取法。
+   *
+   * 实测 window.arguments 传进来是空的（一个参数、没有任何键），窗口作用域里
+   * 也没有 Zotero，所以这里按可靠性逐条找：开窗方在 load 前挂的
+   * window.__TermGroundHost（同时挂在 Xray 包装与 wrappedJSObject 上）优先，
+   * 其次是 window.arguments，再是散装属性，最后退回裸全局。
+   */
+  function hostFrom(target) {
+    if (!target) return null;
+    try {
+      if (target.__TermGroundHost) return target.__TermGroundHost;
+    } catch {
+      /* 跨 compartment 读取可能抛错 */
+    }
+    var assembled = {};
+    var found = false;
+    var mapping = {
+      api: "termgroundApi",
+      zotero: "termgroundZotero",
+      services: "termgroundServices",
+      diagnosticsPath: "termgroundDiagnosticsPath",
+      basePath: "termgroundBasePath",
+    };
+    Object.keys(mapping).forEach(function (key) {
+      try {
+        if (target[mapping[key]] !== undefined) {
+          assembled[key] = target[mapping[key]];
+          found = true;
+        }
+      } catch {
+        /* 忽略单键读取失败 */
+      }
+    });
+    return found ? assembled : null;
+  }
+
+  function resolveHost() {
+    var fromArgs =
+      window && window.arguments && window.arguments[0]
+        ? window.arguments[0]
+        : null;
+    var injected =
+      hostFrom(window) ||
+      hostFrom(
+        (function () {
+          try {
+            return window.wrappedJSObject;
+          } catch {
+            return null;
+          }
+        })(),
+      ) ||
+      fromArgs;
+    if (injected) return injected;
+    return {};
+  }
+
+  var launchArgs = resolveHost();
 
   function resolveGlobal(name) {
     try {
@@ -105,8 +163,20 @@
 
   /** 从主窗口的 Zotero 上取插件实例：只依赖 Services。 */
   function apiFromMainWindow() {
+    if (!ServicesRef || !ServicesRef.wm) return null;
+    /* getMostRecentWindow 比枚举更可靠，两条都试 */
     try {
-      if (!ServicesRef || !ServicesRef.wm) return null;
+      if (ServicesRef.wm.getMostRecentWindow) {
+        var recent = ServicesRef.wm.getMostRecentWindow("navigator:browser");
+        if (recent && recent !== window) {
+          var fromRecent = apiFrom(recent.Zotero);
+          if (fromRecent) return fromRecent;
+        }
+      }
+    } catch {
+      /* 忽略，继续枚举 */
+    }
+    try {
       var enumerator = ServicesRef.wm.getEnumerator("navigator:browser");
       while (enumerator.hasMoreElements()) {
         var win = enumerator.getNext();
@@ -121,9 +191,12 @@
   }
 
   function resolveApi() {
+    /* 开窗方注入的宿主优先：里面有直接的 api 引用，绕开所有作用域问题 */
     if (launchArgs.api && launchArgs.api.snapshot) {
       return launchArgs.api;
     }
+    var fromZoteroRoot = apiFrom(launchArgs.zotero);
+    if (fromZoteroRoot) return fromZoteroRoot;
     var injected =
       apiFrom(window) ||
       apiFrom(
@@ -1326,7 +1399,44 @@
       attempts.push("saveFile: " + shortError(error));
     }
 
-    /* 3. nsIFile + NetUtil 的文件流，最原始也最不依赖上层封装 */
+    /*
+     * 3. IOUtils 仍以路径工作时，直接借主窗口作用域里的 IOUtils——
+     *    这是唯一确定存在且确定能写的组合（主窗口要读写 terms.json）。
+     */
+    try {
+      var hostIO = mainWindowIOUtils();
+      if (hostIO && hostIO.writeUTF8) {
+        hostIO.writeUTF8(
+          path,
+          textValue,
+          append ? { mode: "append" } : undefined,
+        );
+        return "mainWindow.IOUtils.writeUTF8";
+      }
+      attempts.push("主窗口 IOUtils 不可用");
+    } catch (error) {
+      attempts.push("主窗口 IOUtils: " + shortError(error));
+    }
+
+    /* 4. PathUtils 拼出 file:// URI 再写：Gecko 上最正统的写法 */
+    try {
+      var hostPathUtils = mainWindowPathUtils();
+      var hostIO2 = mainWindowIOUtils();
+      if (hostPathUtils && hostIO2 && hostPathUtils.toFileURI) {
+        var uri = hostPathUtils.toFileURI(
+          hostPathUtils.join
+            ? hostPathUtils.join(String(path).replace(/\\/g, "/").split("/"))
+            : path,
+        );
+        hostIO2.writeUTF8(uri, textValue);
+        return "IOUtils.writeUTF8(PathUtils.toFileURI)";
+      }
+      attempts.push("主窗口 PathUtils 不可用");
+    } catch (error) {
+      attempts.push("PathUtils.toFileURI: " + shortError(error));
+    }
+
+    /* 5. nsIFile + NetUtil 的文件流，最原始也最不依赖上层封装 */
     try {
       var NetUtil = resolveGlobal("NetUtil");
       var file = newFile(path);
@@ -1339,7 +1449,7 @@
       attempts.push("NetUtil.writeFile: " + shortError(error));
     }
 
-    /* 4. 自己拼 nsIFileOutputStream */
+    /* 6. 自己拼 nsIFileOutputStream */
     try {
       var stream = newFileOutputStream(path);
       if (stream) {
@@ -1353,50 +1463,86 @@
       attempts.push("nsIFileOutputStream: " + shortError(error));
     }
 
-    /* 5. 借主窗口的 Zotero 写：主窗口作用域一定有可用的文件 API */
+    /*
+     * 7. 借主窗口 Zotero 的数据目录：Zotero 自己读写 terms.json 就在那儿，
+     *    主窗口一定有权限。只在前面都失败时用，且文件名固定为诊断名。
+     */
     try {
-      var mainWin = mainChromeWindow();
-      var mainIO =
-        mainWin && mainWin.Services && mainWin.Services.IOUtils
-          ? mainWin.Services.IOUtils
+      var mainWin3 = mainChromeWindow();
+      var zoteroWin = mainWin3 ? mainWin3.Zotero : null;
+      var dir =
+        zoteroWin && zoteroWin.DataDirectory
+          ? zoteroWin.DataDirectory.dir
           : null;
-      if (mainIO && mainIO.writeUTF8) {
-        mainIO.writeUTF8(
-          path,
-          textValue,
-          append ? { mode: "append" } : undefined,
-        );
-        return "mainWindow.Services.IOUtils.writeUTF8";
+      var hostIO3 = mainWindowIOUtils();
+      if (dir && hostIO3 && hostIO3.writeUTF8) {
+        var target = joinPath(dir, "termground-diagnostics-latest.txt");
+        hostIO3.writeUTF8(target, textValue);
+        attempts.push("已改写到 " + target);
+        return "Zotero.DataDirectory(" + target + ")";
       }
-      attempts.push("主窗口 Services.IOUtils 不可用");
+      attempts.push("主窗口 Zotero.DataDirectory 不可用");
     } catch (error) {
-      attempts.push("主窗口写入: " + shortError(error));
-    }
-
-    /* 6. 主窗口作用域里的 IOUtils（PathUtils 只用来确认路径可用） */
-    try {
-      var mainWin2 = mainChromeWindow();
-      var PathUtils = mainWin2 && mainWin2.PathUtils;
-      var IOUtils2 = mainWin2 && mainWin2.IOUtils;
-      if (PathUtils && PathUtils.isAbsolute && !PathUtils.isAbsolute(path)) {
-        attempts.push("主窗口 PathUtils: 路径不是绝对路径");
-      } else if (IOUtils2 && IOUtils2.writeUTF8) {
-        IOUtils2.writeUTF8(path, textValue);
-        return "mainWindow.IOUtils.writeUTF8";
-      } else {
-        attempts.push("主窗口 IOUtils 不可用");
-      }
-    } catch (error) {
-      attempts.push("主窗口 IOUtils: " + shortError(error));
+      attempts.push("Zotero.DataDirectory: " + shortError(error));
     }
 
     throw new Error("没有可用的写文件接口（" + attempts.join("；") + "）");
   }
 
+  /** 主窗口作用域里的 Services（借用它的 IOUtils）。 */
+  function mainWindowServices() {
+    var mainWin = mainChromeWindow();
+    if (!mainWin) return null;
+    try {
+      if (mainWin.Services) return mainWin.Services;
+    } catch {
+      /* 跨 compartment 读取可能抛错 */
+    }
+    try {
+      if (mainWin.wrappedJSObject && mainWin.wrappedJSObject.Services) {
+        return mainWin.wrappedJSObject.Services;
+      }
+    } catch {
+      /* 同上 */
+    }
+    return null;
+  }
+
+  function mainWindowIOUtils() {
+    var services = mainWindowServices();
+    return services && services.IOUtils ? services.IOUtils : null;
+  }
+
+  function mainWindowPathUtils() {
+    var mainWin = mainChromeWindow();
+    if (!mainWin) return null;
+    try {
+      if (mainWin.PathUtils) return mainWin.PathUtils;
+    } catch {
+      /* 同上 */
+    }
+    try {
+      if (mainWin.wrappedJSObject && mainWin.wrappedJSObject.PathUtils) {
+        return mainWin.wrappedJSObject.PathUtils;
+      }
+    } catch {
+      /* 同上 */
+    }
+    return null;
+  }
+
   /** 找主窗口（navigator:browser），用于借用它的文件 API。 */
   function mainChromeWindow() {
+    if (!ServicesRef || !ServicesRef.wm) return null;
     try {
-      if (!ServicesRef || !ServicesRef.wm) return null;
+      if (ServicesRef.wm.getMostRecentWindow) {
+        var recent = ServicesRef.wm.getMostRecentWindow("navigator:browser");
+        if (recent && recent !== window) return recent;
+      }
+    } catch {
+      /* 忽略，继续枚举 */
+    }
+    try {
       var enumerator = ServicesRef.wm.getEnumerator("navigator:browser");
       while (enumerator.hasMoreElements()) {
         var win = enumerator.getNext();

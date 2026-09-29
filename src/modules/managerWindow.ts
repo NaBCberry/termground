@@ -187,30 +187,34 @@ function openManagerWindow(): void {
   }
   const Services = ztoolkit.getGlobal("Services");
   /*
-   * Pass the plugin API and the two host objects through window.arguments
-   * instead of reaching in afterwards. loadSubScript resolves the window
-   * script's free variables against the target window, and what that scope
-   * happens to expose is not something this side can verify — a reference
-   * passed in as an argument is the window's own, so the window script never
-   * has to guess how the host injected it.
+   * The window gets the plugin API handed to it directly. Both channels used
+   * before proved unreliable in the real window: `window.arguments` arrives
+   * empty (measured: one argument, no keys) and the window scope has neither
+   * `Zotero` nor `window.Zotero`, so the script could not reach the plugin at
+   * all and the pending view only ever showed "插件接口不可用".
+   *
+   * The injection happens in the load handler, immediately before the window
+   * script runs, so nothing else can overwrite it in between.
    */
+  const host = {
+    api: addon.api.manager,
+    zotero: Zotero,
+    services: Services,
+    diagnosticsPath: diagnosticsFileCandidates(),
+    basePath: pluginRoot(),
+  };
   const win = Services.ww.openWindow(
     null,
     `chrome://${config.addonRef}/content/manager.xhtml`,
     `${config.addonRef}-manager`,
-    "chrome,dialog=no,resizable=yes,centerscreen,width=1120,height=760",
-    {
-      api: addon.api.manager,
-      zotero: Zotero,
-      services: Services,
-      diagnosticsPath: diagnosticsFileCandidates(),
-      diagnosticsBasePath: pluginRoot(),
-    },
+    "chrome,centerscreen,resizable=yes,dialog=no,width=1120,height=760",
+    host,
   ) as Window;
   managerWindow = win;
   win.addEventListener(
     "load",
     () => {
+      injectHost(win, host);
       Services.scriptloader.loadSubScript(
         `chrome://${config.addonRef}/content/manager.js`,
         win,
@@ -218,6 +222,49 @@ function openManagerWindow(): void {
     },
     { once: true },
   );
+}
+
+/**
+ * Hand the host object to the window before its script runs.
+ *
+ * `window.arguments` is populated from the openWindow argument, but in practice
+ * the window script saw an empty object, so the same references are also set as
+ * window properties — on the Xray wrapper and, when available, on the raw
+ * window object, because the two sides are separate compartments.
+ */
+function injectHost(win: Window, host: Record<string, unknown>): void {
+  const w = win as unknown as Record<string, unknown> & {
+    wrappedJSObject?: Record<string, unknown>;
+  };
+  const targets: Record<string, unknown>[] = [];
+  try {
+    if (w.wrappedJSObject) targets.push(w.wrappedJSObject);
+  } catch (error) {
+    Zotero.debug(
+      "TermGround: wrappedJSObject unavailable: " +
+        ((error as Error).message ?? String(error)),
+    );
+  }
+  targets.push(w);
+  for (const target of targets) {
+    target.__TermGroundHost = host;
+    /* keep the flattened keys too: older window scripts read them directly */
+    target.termgroundApi = host.api;
+    target.termgroundZotero = host.zotero;
+    target.termgroundServices = host.services;
+    target.termgroundDiagnosticsPath = host.diagnosticsPath;
+    target.termgroundBasePath = host.basePath;
+  }
+  /* window.arguments is unreliable, but keep it correct when it does work */
+  try {
+    (w as { arguments?: unknown }).arguments = [host];
+  } catch (error) {
+    Zotero.debug(
+      "TermGround: cannot set window.arguments: " +
+        ((error as Error).message ?? String(error)),
+    );
+  }
+  Zotero.debug("TermGround: manager host injected into window scope");
 }
 
 /** Ping the open manager window so it reloads after the store changed. */
