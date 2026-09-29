@@ -1,7 +1,8 @@
 {
   "name": "termground",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.3.0",
+  "packageManager": "pnpm@11.19.0",
   "description": "TermGround Plugin",
   "config": {
     "addonName": "TermGround Plugin",
@@ -12,13 +13,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NaBCberry/termground.git"
+    "url": "git+https://github.com/nickdu32/termground.git"
   },
   "author": "NaBCberry",
   "bugs": {
-    "url": "https://github.com/NaBCberry/termground/issues"
+    "url": "https://github.com/nickdu32/termground/issues"
   },
-  "homepage": "https://github.com/NaBCberry/termground#readme",
+  "homepage": "https://github.com/nickdu32/termground#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",

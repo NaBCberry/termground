@@ -9,6 +9,7 @@ import { getString } from "../utils/locale";
 import { PROMOTE_SCORE } from "./termExtract.ts";
 import { growFromItems } from "./termPipeline.ts";
 import { TermStore, type PendingCandidate } from "./termStore.ts";
+import { openTermManager } from "./termManager.ts";
 
 /** Only one extraction at a time; repeated clicks would otherwise pile up. */
 let running = false;
@@ -23,7 +24,10 @@ function popup(closeTime: number) {
   });
 }
 
-function notify(text: string, type: "default" | "success" | "fail" = "default") {
+function notify(
+  text: string,
+  type: "default" | "success" | "fail" = "default",
+) {
   popup(6000).createLine({ text, type, progress: 100 }).show();
 }
 
@@ -58,7 +62,11 @@ function promptService(): PromptService {
 /** How many candidates one review session will walk through. */
 const MAX_REVIEW_PER_RUN = 40;
 
-function reviewText(entry: PendingCandidate, index: number, total: number): string {
+function reviewText(
+  entry: PendingCandidate,
+  index: number,
+  total: number,
+): string {
   const origin = entry.itemTitle
     ? `${entry.itemTitle}${entry.page ? ` p.${entry.page}` : ""}`
     : "来源未知";
@@ -70,7 +78,7 @@ function reviewText(entry: PendingCandidate, index: number, total: number): stri
   return [
     `候选 ${index} / ${total}`,
     "",
-    `中文：${entry.zh}`,
+    `中文：${entry.zh || "（待填写）"}`,
     `英文：${entry.en || "（缺失，入库时会询问）"}`,
     `出处：${origin}${entry.section ? ` · ${entry.section}` : ""}`,
     quote ? `原文：${quote}` : "",
@@ -88,6 +96,20 @@ function selectedItems(): Zotero.Item[] {
 
 export function registerMenus(): void {
   const icon = `chrome://${addon.data.config.addonRef}/content/icons/favicon@0.5x.png`;
+  ztoolkit.Menu.register("item", {
+    tag: "menuitem",
+    id: "termground-itemmenu-manager",
+    label: getString("menuitem-manager"),
+    icon,
+    commandListener: () => openTermManager(),
+  });
+  ztoolkit.Menu.register("menuTools", {
+    tag: "menuitem",
+    id: "termground-toolsmenu-manager",
+    label: getString("menuitem-manager"),
+    icon,
+    commandListener: () => openTermManager(),
+  });
   ztoolkit.Menu.register("item", {
     tag: "menuitem",
     id: "termground-itemmenu-extract",
@@ -137,7 +159,9 @@ export async function extractSelectedItems(): Promise<void> {
   try {
     const store = await TermStore.load();
     const report = await growFromItems(items, store, (title) => {
-      progress.changeLine({ text: `${getString("progress-reading")} ${title}` });
+      progress.changeLine({
+        text: `${getString("progress-reading")} ${title}`,
+      });
     });
 
     progress.changeLine({
@@ -157,7 +181,9 @@ export async function extractSelectedItems(): Promise<void> {
     // An Error object serialises to {} in the debug log, which is exactly
     // useless when the failure is the thing you need to read. Log the message.
     const detail =
-      error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error);
     ztoolkit.log(`termground extract failed: ${detail}`, error);
   } finally {
     running = false;
@@ -168,10 +194,10 @@ export async function showStats(): Promise<void> {
   const store = await TermStore.load();
   const counts = store.counts();
   notify(
-    `术语对 ${counts.pairs} · 证据 ${counts.evidence} · 文献 ${counts.items} · 待确认 ${counts.pending} · verified ${counts.verified}`,
+    `术语对 ${counts.pairs} · 证据 ${counts.evidence} · 文献 ${counts.items} · 待确认 ${counts.pending} · PDF2zh 术语表已同步`,
     "success",
   );
-  ztoolkit.log("termground store", store.path(), counts);
+  ztoolkit.log("termground store", store.path(), store.glossaryPath(), counts);
 }
 
 /**
@@ -219,7 +245,7 @@ export async function reviewPending(): Promise<void> {
       const edited: { zh?: string; en?: string } = {};
       // A candidate that was not auto-promoted usually failed on its Chinese
       // boundary, so that is the field worth correcting first.
-      if (entry.score < PROMOTE_SCORE) {
+      if (!entry.zh || entry.score < PROMOTE_SCORE) {
         const zh = win.prompt(getString("review-fix-chinese"), entry.zh);
         if (zh === null) {
           if (stopAfter.value) break;

@@ -14,6 +14,8 @@ import {
 } from "./termExtract.ts";
 
 export interface TermPair {
+  /** Stable identity; text can be edited without losing its evidence. */
+  id: string;
   en: string;
   zh: string;
   abbr?: string;
@@ -22,9 +24,12 @@ export interface TermPair {
   source: string;
   confidence: number;
   at: string;
+  updatedAt: string;
 }
 
 export interface Evidence {
+  id: string;
+  termId: string;
   en: string;
   zh: string;
   quote: string;
@@ -78,9 +83,12 @@ export interface TermBaseData {
   pending: PendingCandidate[];
 }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const STORE_DIR = "termground";
 const STORE_FILE = "terms.json";
+const PDF2ZH_GLOSSARY_FILE = "pdf2zh-glossary.csv";
+const BACKUP_DIR = "backups";
+const MAX_BACKUPS = 10;
 
 function emptyData(): TermBaseData {
   return {
@@ -128,6 +136,114 @@ function storePath(): string {
   return joinPath(storeDir(), STORE_FILE);
 }
 
+function glossaryPath(): string {
+  return joinPath(storeDir(), PDF2ZH_GLOSSARY_FILE);
+}
+
+function backupDir(): string {
+  return joinPath(storeDir(), BACKUP_DIR);
+}
+
+function csvCell(value: string): string {
+  return `"${value.replace(/"/g, '""').replace(/[\r\n]+/g, " ")}"`;
+}
+
+function pairPriority(pair: TermPair): number {
+  // A human correction is authoritative for translation even though its
+  // evidence status remains "suggested" (the source sentence no longer proves
+  // the edited pair verbatim).
+  if (pair.source === "human_review") return 3;
+  if (pair.status === "verified") return 2;
+  if (pair.status === "attested") return 1;
+  return 0;
+}
+
+function makeId(prefix: string, seed: string): string {
+  return `${prefix}-${shortHash(seed)}-${Date.now().toString(36)}`;
+}
+
+/** Upgrade old stores in memory. The original file is left untouched until save. */
+function normalizeData(input: Partial<TermBaseData>): TermBaseData {
+  const data: TermBaseData = {
+    ...emptyData(),
+    ...input,
+    pairs: [...(input.pairs ?? [])],
+    evidence: [...(input.evidence ?? [])],
+    items: input.items ?? {},
+    pending: input.pending ?? [],
+    version: SCHEMA_VERSION,
+  };
+  const used = new Set<string>();
+  data.pairs = data.pairs.map((raw, index) => {
+    const pair = raw as TermPair;
+    let id =
+      pair.id ||
+      `term-${shortHash(`${pair.en}|${pair.zh}|${pair.at}|${index}`)}`;
+    while (used.has(id)) id = `${id}-${index}`;
+    used.add(id);
+    return { ...pair, id, updatedAt: pair.updatedAt || pair.at };
+  });
+  data.evidence = data.evidence.map((raw, index) => {
+    const evidence = raw as Evidence;
+    const owner = data.pairs.find(
+      (pair) =>
+        lemmaEn(pair.en) === lemmaEn(evidence.en) &&
+        lemmaZh(pair.zh) === lemmaZh(evidence.zh),
+    );
+    return {
+      ...evidence,
+      id:
+        evidence.id ||
+        `evidence-${shortHash(`${evidence.en}|${evidence.zh}|${evidence.at}|${index}`)}`,
+      termId: evidence.termId || owner?.id || "",
+    };
+  });
+  return data;
+}
+
+export interface TermInput {
+  en: string;
+  zh: string;
+  abbr?: string;
+  role?: TermPair["role"];
+  status?: TermPair["status"];
+  source?: string;
+  confidence?: number;
+}
+
+/** Build the three-column glossary format consumed by PDFMathTranslate Next. */
+export function buildPdf2zhGlossary(
+  pairs: TermPair[],
+  targetLanguage = "zh-CN",
+): string {
+  const preferred = new Map<string, TermPair>();
+  for (const pair of pairs) {
+    const en = cleanSurface(pair.en);
+    const zh = cleanSurface(pair.zh);
+    if (!en || !zh) continue;
+    const key = lemmaEn(en);
+    const current = preferred.get(key);
+    if (
+      !current ||
+      pairPriority(pair) > pairPriority(current) ||
+      (pairPriority(pair) === pairPriority(current) &&
+        pair.confidence > current.confidence)
+    ) {
+      preferred.set(key, { ...pair, en, zh });
+    }
+  }
+
+  const rows = [...preferred.values()].sort(
+    (a, b) => b.en.length - a.en.length || a.en.localeCompare(b.en),
+  );
+  return [
+    "source,target,tgt_lng",
+    ...rows.map((pair) =>
+      [csvCell(pair.en), csvCell(pair.zh), csvCell(targetLanguage)].join(","),
+    ),
+  ].join("\n");
+}
+
 export class TermStore {
   data: TermBaseData;
   private byZh = new Map<string, TermPair[]>();
@@ -147,30 +263,62 @@ export class TermStore {
         const text =
           typeof raw === "string" ? raw : new TextDecoder().decode(raw);
         const parsed = JSON.parse(text) as Partial<TermBaseData>;
-        data = {
-          ...emptyData(),
-          ...parsed,
-          items: parsed.items ?? {},
-          pending: parsed.pending ?? [],
-        };
+        data = normalizeData(parsed);
       }
     } catch {
       // First run: the file does not exist yet.
     }
-    return new TermStore(data);
+    return new TermStore(normalizeData(data));
   }
 
   /** Build a store from plain data; used by tests and by future import paths. */
   static fromData(data: Partial<TermBaseData> = {}): TermStore {
-    return new TermStore({ ...emptyData(), ...data });
+    return new TermStore(normalizeData(data));
   }
 
-  async save(): Promise<void> {
+  async save(options: { backup?: boolean } = {}): Promise<void> {
     await Zotero.File.createDirectoryIfMissingAsync(storeDir());
+    if (options.backup) await this.createBackup();
     await Zotero.File.putContentsAsync(
       storePath(),
       JSON.stringify(this.data, null, 2),
     );
+    await Zotero.File.putContentsAsync(
+      glossaryPath(),
+      buildPdf2zhGlossary(this.data.pairs),
+    );
+  }
+
+  private async createBackup(): Promise<void> {
+    try {
+      if (!Zotero.File.pathToFile(storePath()).exists()) return;
+      const raw = await Zotero.File.getContentsAsync(storePath());
+      if (!raw) return;
+      await Zotero.File.createDirectoryIfMissingAsync(backupDir());
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const path = joinPath(backupDir(), `terms-${stamp}.json`);
+      await Zotero.File.putContentsAsync(
+        path,
+        typeof raw === "string" ? raw : new TextDecoder().decode(raw),
+      );
+      const files: Array<{ name: string; path: string }> = [];
+      await Zotero.File.iterateDirectory(backupDir(), (entry) => {
+        if (entry.name.startsWith("terms-") && entry.name.endsWith(".json")) {
+          files.push({ name: entry.name, path: entry.path });
+        }
+      });
+      files.sort((a, b) => b.name.localeCompare(a.name));
+      await Promise.all(
+        files
+          .slice(MAX_BACKUPS)
+          .map((entry) => Zotero.File.removeIfExists(entry.path)),
+      );
+    } catch (error) {
+      // A backup failure must cancel a destructive edit, not silently proceed.
+      throw new Error(`无法创建术语库备份：${String(error)}`, {
+        cause: error,
+      });
+    }
   }
 
   private reindex(): void {
@@ -222,6 +370,8 @@ export class TermStore {
     );
 
     this.data.evidence.push({
+      id: makeId("evidence", `${en}|${zh}|${at}|${candidate.quote}`),
+      termId: existing?.id ?? "",
       en,
       zh,
       quote: candidate.quote,
@@ -236,7 +386,8 @@ export class TermStore {
       return false;
     }
 
-    this.data.pairs.push({
+    const pair: TermPair = {
+      id: makeId("term", `${en}|${zh}|${at}`),
       en,
       zh,
       abbr: candidate.abbr,
@@ -245,7 +396,10 @@ export class TermStore {
       source: rule.source,
       confidence: candidate.score,
       at,
-    });
+      updatedAt: at,
+    };
+    this.data.pairs.push(pair);
+    this.data.evidence[this.data.evidence.length - 1].termId = pair.id;
     this.reindex();
     return true;
   }
@@ -323,7 +477,8 @@ export class TermStore {
     const rule = changed ? undefined : PROMOTABLE[entry.method];
     const at = new Date().toISOString();
 
-    this.data.pairs.push({
+    const pair: TermPair = {
+      id: makeId("term", `${en}|${zh}|${at}`),
       en,
       zh,
       abbr: entry.abbr,
@@ -332,8 +487,12 @@ export class TermStore {
       source: rule ? rule.source : "human_review",
       confidence: rule ? entry.score : 0.5,
       at,
-    });
+      updatedAt: at,
+    };
+    this.data.pairs.push(pair);
     this.data.evidence.push({
+      id: makeId("evidence", `${en}|${zh}|${at}|${entry.quote}`),
+      termId: pair.id,
       en,
       zh,
       quote: entry.quote,
@@ -348,6 +507,104 @@ export class TermStore {
     );
     this.reindex();
     return true;
+  }
+
+  evidenceForTerm(termId: string): Evidence[] {
+    const pair = this.data.pairs.find((item) => item.id === termId);
+    if (!pair) return [];
+    return this.data.evidence.filter(
+      (item) =>
+        item.termId === termId ||
+        (!item.termId &&
+          lemmaEn(item.en) === lemmaEn(pair.en) &&
+          lemmaZh(item.zh) === lemmaZh(pair.zh)),
+    );
+  }
+
+  createTerm(input: TermInput): TermPair {
+    const en = cleanSurface(input.en);
+    const zh = cleanSurface(input.zh);
+    if (!en || !zh) throw new Error("英文术语和中文译名不能为空");
+    if (this.hasExactPair(en, zh)) throw new Error("相同的中英文术语已经存在");
+    const now = new Date().toISOString();
+    const pair: TermPair = {
+      id: makeId("term", `${en}|${zh}|${now}`),
+      en,
+      zh,
+      abbr: cleanSurface(input.abbr ?? "") || undefined,
+      role: input.role ?? "preferred",
+      status: input.status ?? "suggested",
+      source: input.source ?? "human_review",
+      confidence: Math.max(0, Math.min(1, input.confidence ?? 1)),
+      at: now,
+      updatedAt: now,
+    };
+    this.data.pairs.push(pair);
+    this.reindex();
+    return pair;
+  }
+
+  updateTerm(id: string, input: TermInput): TermPair {
+    const pair = this.data.pairs.find((item) => item.id === id);
+    if (!pair) throw new Error("找不到要编辑的术语");
+    const en = cleanSurface(input.en);
+    const zh = cleanSurface(input.zh);
+    if (!en || !zh) throw new Error("英文术语和中文译名不能为空");
+    if (this.hasExactPair(en, zh, id))
+      throw new Error("相同的中英文术语已经存在");
+    Object.assign(pair, {
+      en,
+      zh,
+      abbr: cleanSurface(input.abbr ?? "") || undefined,
+      role: input.role ?? pair.role,
+      status: input.status ?? pair.status,
+      source: input.source ?? pair.source,
+      confidence: Math.max(0, Math.min(1, input.confidence ?? pair.confidence)),
+      updatedAt: new Date().toISOString(),
+    });
+    this.reindex();
+    return pair;
+  }
+
+  deleteTerms(ids: Iterable<string>): { pairs: number; evidence: number } {
+    const targets = new Set(ids);
+    const beforePairs = this.data.pairs.length;
+    const beforeEvidence = this.data.evidence.length;
+    const removed = this.data.pairs.filter((pair) => targets.has(pair.id));
+    this.data.pairs = this.data.pairs.filter((pair) => !targets.has(pair.id));
+    this.data.evidence = this.data.evidence.filter((evidence) => {
+      if (targets.has(evidence.termId)) return false;
+      return !removed.some(
+        (pair) =>
+          !evidence.termId &&
+          lemmaEn(evidence.en) === lemmaEn(pair.en) &&
+          lemmaZh(evidence.zh) === lemmaZh(pair.zh),
+      );
+    });
+    this.reindex();
+    return {
+      pairs: beforePairs - this.data.pairs.length,
+      evidence: beforeEvidence - this.data.evidence.length,
+    };
+  }
+
+  restoreDeleted(pairs: TermPair[], evidence: Evidence[]): void {
+    const knownPairs = new Set(this.data.pairs.map((pair) => pair.id));
+    const knownEvidence = new Set(this.data.evidence.map((item) => item.id));
+    this.data.pairs.push(...pairs.filter((pair) => !knownPairs.has(pair.id)));
+    this.data.evidence.push(
+      ...evidence.filter((item) => !knownEvidence.has(item.id)),
+    );
+    this.reindex();
+  }
+
+  private hasExactPair(en: string, zh: string, exceptId?: string): boolean {
+    return this.data.pairs.some(
+      (pair) =>
+        pair.id !== exceptId &&
+        lemmaEn(pair.en) === lemmaEn(en) &&
+        lemmaZh(pair.zh) === lemmaZh(zh),
+    );
   }
 
   rejectPending(entry: PendingCandidate): void {
@@ -376,5 +633,9 @@ export class TermStore {
 
   path(): string {
     return storePath();
+  }
+
+  glossaryPath(): string {
+    return glossaryPath();
   }
 }

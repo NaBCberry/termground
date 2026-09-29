@@ -2,6 +2,10 @@ import { getString, initLocale } from "./utils/locale";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { createZToolkit } from "./utils/ztoolkit";
 import { registerMenus } from "./modules/terminology";
+import {
+  installCnkiIntegration,
+  uninstallCnkiIntegration,
+} from "./modules/cnkiIntegration";
 
 async function onStartup() {
   await Promise.all([
@@ -11,6 +15,11 @@ async function onStartup() {
   ]);
 
   initLocale();
+
+  // Translate for Zotero exposes its services before its own asynchronous
+  // startup finishes. Patching here keeps its normal UI and request flow while
+  // adding terminology protection only to the CNKI service.
+  await installCnkiIntegration();
 
   Zotero.PreferencePanes.register({
     pluginID: addon.data.config.addonID,
@@ -32,6 +41,9 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   // Create ztoolkit for every window
   addon.data.ztoolkit = createZToolkit();
 
+  // A second, idempotent attempt covers either plugin load order.
+  await installCnkiIntegration();
+
   win.MozXULElement.insertFTLIfNeeded(
     `${addon.data.config.addonRef}-mainWindow.ftl`,
   );
@@ -47,6 +59,7 @@ async function onMainWindowUnload(_win: Window): Promise<void> {
 }
 
 function onShutdown(): void {
+  uninstallCnkiIntegration();
   ztoolkit.unregisterAll();
   addon.data.dialog?.window?.close();
   // Remove addon object
@@ -72,4 +85,3 @@ export default {
   onMainWindowUnload,
   onPrefsEvent,
 };
-

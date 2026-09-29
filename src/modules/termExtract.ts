@@ -20,6 +20,7 @@ import {
 export type ExtractionMethod =
   | "author_note"
   | "english_note"
+  | "english_abbreviation"
   | "bilingual_keyword"
   | "zh_np_frequency";
 
@@ -46,6 +47,7 @@ export interface ExtractionStats {
   keywordPairs: number;
   zhKeywords: number;
   enKeywords: number;
+  englishAbbreviations: number;
   unmappedCandidates: number;
   /** Candidates thrown away for being unusable; surfaced so the loss is visible. */
   rejected: number;
@@ -61,11 +63,51 @@ export interface RawGloss {
 
 /** Suffixes that make a Chinese noun phrase look like a domain term. */
 export const DOMAIN_SUFFIXES = [
-  "定位", "搜索", "导航", "追踪", "建图", "图优化", "里程计", "滤波", "估计",
-  "算法", "模型", "系统", "方法", "技术", "网络", "传感器", "信号", "误差",
-  "精度", "轨迹", "地图", "融合", "标定", "匹配", "特征", "参数", "矩阵",
-  "函数", "分布", "空间", "框架", "策略", "机制", "平台", "装置", "测量",
-  "检测", "识别", "分类", "聚类", "仿真", "约束", "优化", "求解", "重构",
+  "定位",
+  "搜索",
+  "导航",
+  "追踪",
+  "建图",
+  "图优化",
+  "里程计",
+  "滤波",
+  "估计",
+  "算法",
+  "模型",
+  "系统",
+  "方法",
+  "技术",
+  "网络",
+  "传感器",
+  "信号",
+  "误差",
+  "精度",
+  "轨迹",
+  "地图",
+  "融合",
+  "标定",
+  "匹配",
+  "特征",
+  "参数",
+  "矩阵",
+  "函数",
+  "分布",
+  "空间",
+  "框架",
+  "策略",
+  "机制",
+  "平台",
+  "装置",
+  "测量",
+  "检测",
+  "识别",
+  "分类",
+  "聚类",
+  "仿真",
+  "约束",
+  "优化",
+  "求解",
+  "重构",
 ];
 
 const MIN_SUFFIX_LEN = Math.min(...DOMAIN_SUFFIXES.map((s) => s.length));
@@ -105,15 +147,49 @@ export const STOP_TERMS = new Set([
  * list. Everything from the first marker on is page furniture, not keywords.
  */
 export const METADATA_MARKERS = [
-  "中图分类号", "中图法分类号", "文献标识码", "文献标志码", "文章编号",
-  "收稿日期", "修回日期", "基金项目", "作者简介", "通信作者", "通讯作者",
-  "引用格式", "DOI", "Received", "Revised", "Accepted", "Published",
-  "Citation", "E-mail", "Email",
+  "中图分类号",
+  "中图法分类号",
+  "文献标识码",
+  "文献标志码",
+  "文章编号",
+  "收稿日期",
+  "修回日期",
+  "基金项目",
+  "作者简介",
+  "通信作者",
+  "通讯作者",
+  "引用格式",
+  "DOI",
+  "Received",
+  "Revised",
+  "Accepted",
+  "Published",
+  "Citation",
+  "E-mail",
+  "Email",
 ];
 
 const EN_STOPWORDS = new Set([
-  "if", "else", "for", "and", "or", "of", "in", "on", "to", "the", "a", "an",
-  "is", "are", "was", "were", "with", "by", "et", "al",
+  "if",
+  "else",
+  "for",
+  "and",
+  "or",
+  "of",
+  "in",
+  "on",
+  "to",
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "with",
+  "by",
+  "et",
+  "al",
 ]);
 
 /** "dist rib ut ed model predicti ve cont r ol" — the PDF broke every word. */
@@ -124,9 +200,24 @@ const FRAGMENTED_LATIN = /\b[a-z]{1,2}\b(?=.*\b[a-z]{1,2}\b)/;
  * ("参考文献（References）"), but nobody wants them in a term base.
  */
 export const SECTION_WORDS = new Set([
-  "引言", "绪论", "结论", "结束语", "结论与展望", "参考文献", "摘要", "关键词",
-  "目录", "致谢", "附录", "作者简介", "基金项目", "收稿日期", "中图分类号",
-  "文献标识码", "文章编号", "通信作者",
+  "引言",
+  "绪论",
+  "结论",
+  "结束语",
+  "结论与展望",
+  "参考文献",
+  "摘要",
+  "关键词",
+  "目录",
+  "致谢",
+  "附录",
+  "作者简介",
+  "基金项目",
+  "收稿日期",
+  "中图分类号",
+  "文献标识码",
+  "文章编号",
+  "通信作者",
 ]);
 
 /**
@@ -169,14 +260,14 @@ export function isPlausiblePair(zh: string, en: string): boolean {
   if (FRAGMENTED_LATIN.test(e.toLowerCase())) return false;
   if (METADATA_MARKERS.some((marker) => e.includes(marker))) return false;
   if (DIGIT_RUN.test(e)) return false;
-  if (!e.includes(" ") && !e.includes("-") && e.length > CONCATENATED_EN_LENGTH) {
+  if (
+    !e.includes(" ") &&
+    !e.includes("-") &&
+    e.length > CONCATENATED_EN_LENGTH
+  ) {
     return false;
   }
-  if (
-    e
-      .split(/[\s-]+/)
-      .some((token) => token.length > MAX_EN_TOKEN_LENGTH)
-  ) {
+  if (e.split(/[\s-]+/).some((token) => token.length > MAX_EN_TOKEN_LENGTH)) {
     return false;
   }
   return true;
@@ -190,6 +281,59 @@ function zhFirstRegex(): RegExp {
 /** English Term（中文术语） */
 function enFirstRegex(): RegExp {
   return /([A-Za-z][A-Za-z0-9 \-/&'’.]{2,60}?)\s*[（(]\s*([\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9\-·]{1,19})\s*[)）]/g;
+}
+
+const EN_ABBREVIATION_RE =
+  /((?:[A-Za-z][A-Za-z'’-]*\s+){1,9}[A-Za-z][A-Za-z'’-]*)\s*[（(]\s*([A-Z][A-Za-z0-9-]{1,11})\s*[)）]/g;
+
+const ACRONYM_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "in",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "with",
+]);
+
+/**
+ * Extract English definitions such as "Automated Machine Learning (AutoML)".
+ *
+ * These never auto-enter the bilingual term base because the Chinese side is
+ * absent. They go to review so the user can supply the preferred translation.
+ * Matching the abbreviation against the shortest suffix prevents sentence text
+ * before the term from becoming part of the candidate.
+ */
+export function findEnglishAbbreviations(
+  text: string,
+): Array<{ en: string; abbr: string }> {
+  const found: Array<{ en: string; abbr: string }> = [];
+  for (const match of text.matchAll(EN_ABBREVIATION_RE)) {
+    const abbr = cleanSurface(match[2]);
+    const acronym = [...abbr].filter((char) => /[A-Z]/.test(char)).join("");
+    if (acronym.length < 2) continue;
+
+    const tokens = match[1].trim().split(/\s+/);
+    let term = "";
+    for (let start = tokens.length - 2; start >= 0; start--) {
+      const suffix = tokens.slice(start);
+      const initials = suffix
+        .filter((token) => !ACRONYM_STOPWORDS.has(token.toLowerCase()))
+        .map((token) => token[0].toUpperCase())
+        .join("");
+      if (initials === acronym) {
+        term = suffix.join(" ");
+        break;
+      }
+    }
+    if (!term || term.length > 80) continue;
+    found.push({ en: cleanSurface(term), abbr });
+  }
+  return found;
 }
 
 const KEYWORDS_ZH_RE = /关\s*键\s*词\s*[:：]\s*(.+)/;
@@ -252,7 +396,13 @@ export function findAuthorNotes(text: string, known: Set<string>): RawGloss[] {
     const en = cleanSurface(match[2]);
     const abbr = match[3] ? cleanSurface(match[3]) : undefined;
     if (!en || zh.length < 2) continue;
-    found.push({ zh: cleanSurface(zh), en, abbr, certain, method: "author_note" });
+    found.push({
+      zh: cleanSurface(zh),
+      en,
+      abbr,
+      certain,
+      method: "author_note",
+    });
   }
   return found;
 }
@@ -317,6 +467,7 @@ export function extractFromSegments(
   const zhKeywords: Array<{ segment: Segment; value: string }> = [];
   const enKeywords: Array<{ segment: Segment; value: string }> = [];
   let authorNotes = 0;
+  let englishAbbreviations = 0;
 
   for (const segment of segments) {
     // Normalise here rather than trusting the caller: the PDF text layer puts
@@ -350,6 +501,20 @@ export function extractFromSegments(
         section: segment.section,
       });
       authorNotes++;
+    }
+
+    for (const term of findEnglishAbbreviations(text)) {
+      candidates.push({
+        zh: "",
+        en: term.en,
+        abbr: term.abbr,
+        method: "english_abbreviation",
+        score: 0.72,
+        quote: text,
+        page: segment.page,
+        section: segment.section,
+      });
+      englishAbbreviations++;
     }
 
     const matchZh = KEYWORDS_ZH_RE.exec(text);
@@ -430,6 +595,7 @@ export function extractFromSegments(
       keywordPairs,
       zhKeywords: zhKeywords.length,
       enKeywords: enKeywords.length,
+      englishAbbreviations,
       unmappedCandidates: unmapped.length,
       rejected,
     },

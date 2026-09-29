@@ -3,6 +3,7 @@ startup-finish = TermGround 已就绪
 menuitem-extract = 提取术语（TermGround）
 menuitem-stats = 术语库统计
 menuitem-review = 待确认候选（TermGround）
+menuitem-manager = TermGround 术语库
 
 review-none = 没有待确认的候选
 review-accept = 入库

@@ -16,10 +16,12 @@ export async function registerPrefsScripts(window: Window): Promise<void> {
   if (!target) return;
   try {
     const store = await TermStore.load();
-    target.textContent = `${getString("pref-base-path")} ${store.path()}`;
+    target.textContent = [
+      `${getString("pref-base-path")} ${store.path()}`,
+      `PDF2zh glossary: ${store.glossaryPath()}`,
+    ].join("\n");
   } catch (error) {
     target.textContent = String(error);
     ztoolkit.log("termground: failed to load term base path", error);
   }
 }
-

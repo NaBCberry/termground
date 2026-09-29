@@ -3,6 +3,7 @@ startup-finish = TermGround is ready
 menuitem-extract = Extract terms (TermGround)
 menuitem-stats = Term base statistics
 menuitem-review = Review candidates (TermGround)
+menuitem-manager = TermGround term base
 
 review-none = Nothing to review
 review-accept = Accept
