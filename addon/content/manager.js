@@ -14,7 +14,7 @@
  * 2) 任何一步失败都要在窗口里留下可见痕迹。以前失败只弹 3.6 秒的 toast，
  *    窗口里什么都留不下，于是"渲染压根没跑"和"渲染跑了但为空"长得一模
  *    一样。现在启动失败写进错误横幅，刷新失败写进列表本身，每一步记进
- *    诊断日志（页脚「诊断」按钮可直接复制）。
+ *    诊断文件（页脚「导出诊断」按钮也会再写一次并提示文件路径）。
  */
 (function () {
   "use strict";
@@ -77,14 +77,69 @@
     }
   })();
 
-  /** 开窗方传入的接口优先，其次从 Zotero 上的插件实例取。 */
+  /**
+   * 找到插件的管理接口。
+   *
+   * 真实窗口里 window.arguments 与 window.Zotero 都不可靠（实测窗口作用域
+   * 里 Zotero 取不到、Services 能取到，api 直接为 null，界面就只剩"插件
+   * 接口不可用"）。所以这里按可靠性从高到低逐条试：
+   *
+   * 1. 开窗方经 window.arguments 传入的 api；
+   * 2. 开窗方直接挂在窗口对象上的 api（跨 compartment 时挂在 wrappedJSObject 上）；
+   * 3. 插件在 Zotero 主窗口上留的引用（Zotero.TermGround 实例）；
+   * 4. 用 Services.wm 枚举窗口，从任一 navigator:browser 主窗口上的
+   *    Zotero.TermGround 取——窗口里有 Services 就够了，不依赖 Zotero
+   *    这个自由变量。
+   */
+  function apiFrom(root) {
+    if (!root || typeof root !== "object") return null;
+    var pluginRoot = root.TermGround;
+    var manager = pluginRoot && pluginRoot.api ? pluginRoot.api.manager : null;
+    if (manager && manager.snapshot) return manager;
+    /* 插件实例被直接挂上来的情况：{ data, api } */
+    if (root.api && root.api.manager && root.api.manager.snapshot) {
+      return root.api.manager;
+    }
+    return null;
+  }
+
+  /** 从主窗口的 Zotero 上取插件实例：只依赖 Services。 */
+  function apiFromMainWindow() {
+    try {
+      if (!ServicesRef || !ServicesRef.wm) return null;
+      var enumerator = ServicesRef.wm.getEnumerator("navigator:browser");
+      while (enumerator.hasMoreElements()) {
+        var win = enumerator.getNext();
+        if (!win || win === window) continue;
+        var found = apiFrom(win.Zotero);
+        if (found) return found;
+      }
+    } catch {
+      /* 枚举失败则放弃这条路径 */
+    }
+    return null;
+  }
+
   function resolveApi() {
     if (launchArgs.api && launchArgs.api.snapshot) {
       return launchArgs.api;
     }
-    var root = ZoteroRef && ZoteroRef.TermGround;
-    var candidate = root && root.api ? root.api.manager : null;
-    return candidate && candidate.snapshot ? candidate : null;
+    var injected =
+      apiFrom(window) ||
+      apiFrom(
+        (function () {
+          try {
+            return window.wrappedJSObject;
+          } catch {
+            return null;
+          }
+        })(),
+      ) ||
+      apiFrom(window.opener);
+    if (injected) return injected;
+    var fromGlobal = apiFrom(ZoteroRef) || apiFrom(resolveGlobal("Zotero"));
+    if (fromGlobal) return fromGlobal;
+    return apiFromMainWindow();
   }
 
   var api = resolveApi();
@@ -119,7 +174,7 @@
     }
   }
 
-  /** 记一行诊断：进官方日志，同时留给「诊断」按钮与诊断文件。 */
+  /** 记一行诊断：进官方日志，同时留给「导出诊断」按钮与诊断文件。 */
   function trace(message) {
     DIAG.push(message);
     if (DIAG.length > 300) {
@@ -396,7 +451,7 @@
       el(
         "div",
         { class: "err-hint" },
-        "点页脚「诊断」复制完整信息，或查看 Zotero 调试日志。",
+        "点页脚「导出诊断」写入文件，或查看 Zotero 调试日志。",
       ),
     ]);
   }
@@ -1264,6 +1319,28 @@
     }
   }
 
+  /** 与 termStore 同一套路径拼法：分隔符从数据目录自身推断。 */
+  function diagnosticsPathFromZotero() {
+    try {
+      if (
+        !ZoteroRef ||
+        !ZoteroRef.DataDirectory ||
+        !ZoteroRef.DataDirectory.dir
+      ) {
+        return null;
+      }
+      var dir = String(ZoteroRef.DataDirectory.dir);
+      var separator = dir.indexOf("\\") >= 0 ? "\\" : "/";
+      return (
+        dir.replace(/[\\/]+$/, "") +
+        separator +
+        "termground-manager-diagnostics.txt"
+      );
+    } catch {
+      return null;
+    }
+  }
+
   function diagnosticsCandidates() {
     var candidates = [];
     var given = launchArgs.diagnosticsPath;
@@ -1271,6 +1348,11 @@
       candidates.push(given);
     } else if (Array.isArray(given)) {
       candidates = candidates.concat(given);
+    }
+    /* window.arguments 在真实窗口里未必送达，那就用拿到的 Zotero 自己推 */
+    var fromZotero = diagnosticsPathFromZotero();
+    if (fromZotero && candidates.indexOf(fromZotero) < 0) {
+      candidates.push(fromZotero);
     }
     var fallback = fallbackDiagnosticsPath();
     if (fallback && candidates.indexOf(fallback) < 0) {
@@ -1571,22 +1653,43 @@
     }
   }
 
-  /** 顶部搜索框与导出按钮由 XHTML 提供；图标必须自己补上（见 manager.xhtml）。 */
-  function hydrateStaticIcons() {
+  /**
+   * 补静态标记里的图形与提示。
+   *
+   * XHTML 是严格 XML，内联 <svg> 只要有一处不合法，整个文档连同静态标记
+   * 都会解析失败——实测窗口里 Zotero/Services 能拿到、脚本在跑，但静态头
+   * 部的图标与页脚提示缺失，就是这一类。主题图标与页脚提示都改由脚本用
+   * createElementNS 现造（本文件本来就不拼标记字符串）。
+   */
+  function hydrateStaticMarkup() {
     var theme = $("#theme");
-    if (!theme || theme.querySelector("svg")) return;
-    try {
-      var circle = svgPart("circle", { cx: "8", cy: "8", r: "3.2" });
-      var path = svgPart("path", {
-        d:
-          "M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4" +
-          "M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4",
-        "stroke-linecap": "round",
-      });
-      theme.appendChild(svgIcon(15, "0 0 16 16", [circle, path]));
-      trace("static icons hydrated");
-    } catch (error) {
-      trace("static icons failed: " + shortError(error));
+    if (theme && !theme.querySelector("svg")) {
+      try {
+        var circle = svgPart("circle", { cx: "8", cy: "8", r: "3.2" });
+        var path = svgPart("path", {
+          d:
+            "M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4" +
+            "M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4",
+          "stroke-linecap": "round",
+        });
+        theme.appendChild(svgIcon(15, "0 0 16 16", [circle, path]));
+        trace("static icon rebuilt");
+      } catch (error) {
+        trace("static icon failed: " + shortError(error));
+      }
+    }
+
+    var hints = $("#hints");
+    if (hints && !hints.childNodes.length) {
+      fill(hints, [
+        el("span", { class: "h" }, [
+          span("kbd", "Enter"),
+          text(" 确认并下一条"),
+        ]),
+        el("span", { class: "h" }, [span("kbd", "R"), text(" 驳回")]),
+        el("span", { class: "h" }, [span("kbd", "S"), text(" 跳过")]),
+      ]);
+      trace("static hints rebuilt");
     }
   }
 
@@ -1621,8 +1724,7 @@
 
     bindEvents();
     ensureStylesheet();
-    hydrateStaticIcons();
-    hydrateStaticMarkupLosses();
+    hydrateStaticMarkup();
 
     trace(
       "boot: contentType=" +
@@ -1668,25 +1770,6 @@
       setCurrent(0);
       trace("boot complete");
     });
-  }
-
-  /**
-   * XHTML 是严格 XML：静态标记里出现未声明实体等问题会让整段标记失效。
-   * 这里补回唯一一处需要图形的地方（主题图标），其余维持纯文本。
-   */
-  function hydrateStaticMarkupLosses() {
-    var hints = $("#hints");
-    if (hints && !hints.childNodes.length) {
-      fill(hints, [
-        el("span", { class: "h" }, [
-          span("kbd", "Enter"),
-          text(" 确认并下一条"),
-        ]),
-        el("span", { class: "h" }, [span("kbd", "R"), text(" 驳回")]),
-        el("span", { class: "h" }, [span("kbd", "S"), text(" 跳过")]),
-      ]);
-      trace("static hints rebuilt");
-    }
   }
 
   try {
