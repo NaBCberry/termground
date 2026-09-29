@@ -37,9 +37,57 @@ test("CNKI protection uses longest non-overlapping terms", () => {
   );
 
   assert.equal(protectedText.terms.length, 2);
-  assert.match(protectedText.text, /自动化机器学习/);
-  assert.match(protectedText.text, /机器学习/);
-  assert.doesNotMatch(protectedText.text, /Automated machine learning/i);
+  assert.match(
+    protectedText.text,
+    /\[\[TG0000\]\]Automated machine learning\[\[\/TG0000\]\]/,
+  );
+  assert.match(
+    protectedText.text,
+    /\[\[TG0001\]\]machine learning\[\[\/TG0001\]\]/,
+  );
+});
+
+test("CNKI protection keeps the English inside the marker", () => {
+  const protectedText = protectCnkiTerms("We use a support vector machine.", [
+    pair("support vector machine", "支持向量机"),
+  ]);
+
+  // 往英文原文里注入中文会让 CNKI 判错语种、整段不翻（实测返回的是原文），
+  // 所以标记里包的是原文英文，中文只在译后替换时出现。
+  assert.equal(
+    protectedText.text,
+    "We use a [[TG0000]]support vector machine[[/TG0000]].",
+  );
+});
+
+test("CNKI restoration survives markers the service spaced out or truncated", () => {
+  const protectedText = protectCnkiTerms(
+    "a full-coverage path planning algorithm for",
+    [pair("path planning algorithm", "路径规划算法")],
+  );
+  // 实测返回：方括号之间被插了空格，收尾的最后一个方括号还可能整个丢掉。
+  const translated =
+    "a full-coverage [ [ TG0000 ] ] path planning algorithm [ [ / TG0000 ] for";
+  const { text, report } = restoreCnkiTerms(translated, protectedText.terms);
+
+  assert.equal(text, "a full-coverage 路径规划算法 for");
+  assert.equal(report.restored, 1);
+  assert.equal(report.lost, 0);
+});
+
+test("CNKI restoration removes a spaced-out orphan marker", () => {
+  const protectedText = protectCnkiTerms("We use a support vector machine.", [
+    pair("support vector machine", "支持向量机"),
+  ]);
+  const { text, report } = restoreCnkiTerms(
+    "我们使用 [ [ TG0000 ] ] 支持向量机 [ [ / TG0000 ] 。",
+    protectedText.terms,
+  );
+
+  assert.equal(text, "我们使用 支持向量机 。");
+  assert.doesNotMatch(text, /TG0000/);
+  assert.equal(report.restored, 1);
+  assert.equal(report.lost, 0);
 });
 
 test("CNKI protection respects English word boundaries", () => {

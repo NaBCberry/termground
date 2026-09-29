@@ -115,9 +115,16 @@ function findMatches(raw: string, pairs: TermPair[]): Match[] {
 }
 
 /**
- * Put the preferred Chinese translation inside a neutral marker. CNKI normally
- * preserves both the marker and the already-Chinese text; the matching marker
- * lets us enforce the preferred target after translation.
+ * Wrap each matched source term in a marker so it can be enforced afterwards.
+ *
+ * The English stays inside the marker — deliberately, and contrary to the first
+ * revision, which put the Chinese translation there on the theory that CNKI
+ * would pass already-Chinese text through untouched. Measured behaviour is the
+ * opposite: injecting Chinese into an English source makes CNKI mis-detect the
+ * language and hand the English back untranslated, with the mangled marker
+ * visible in the result. Keeping the input English lets the engine translate
+ * normally; the marker then only has to survive long enough for
+ * restoreCnkiTerms to swap the whole span for the stored target.
  */
 export function protectCnkiTerms(
   raw: string,
@@ -133,7 +140,8 @@ export function protectCnkiTerms(
     const match = matches[index];
     const tag = `TG${index.toString().padStart(4, "0")}`;
     text += raw.slice(cursor, match.start);
-    text += `[[${tag}]]${match.pair.zh}[[/${tag}]]`;
+    /* 用原文切片而不是 pair.en：保留大小写与原始写法，注入的仍是纯英文。 */
+    text += `[[${tag}]]${raw.slice(match.start, match.end)}[[/${tag}]]`;
     terms.push({ source: match.pair.en, target: match.pair.zh, tag });
     cursor = match.end;
   }
@@ -146,7 +154,29 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * Restore every intact marker and remove any harmless leftover marker tags.
+ * Marker pattern, tolerant of what the translation service does to it.
+ *
+ * Measured on CNKI: `[[TG0000]]` comes back as `[ [ TG0000 ] ]` — a space
+ * between the two brackets — and the closing `]]` can even lose its last
+ * bracket. Requiring the exact `[[…]]` form meant the restore never matched
+ * (every call reported restored=0) *and* left the mangled tags sitting in the
+ * user's translation. So whitespace is allowed between both bracket pairs, and
+ * the final bracket is optional.
+ */
+function markerPattern(tag: string, closing: boolean): string {
+  const slash = closing ? "\\/\\s*" : "";
+  /*
+   * 收尾写成 `\](\s*\])?` 而不是 `\]\s*\]?`：后者在标记后面跟着单词时会把那个
+   * 空格一起吃掉，译出来就变成「路径规划算法for」这种粘连。
+   */
+  return `\\[\\s*\\[\\s*${slash}${escapeRegExp(tag)}\\s*\\](\\s*\\])?`;
+}
+
+/** 正文里剩下的孤立标记；成对的已经在替换那一步消掉了。 */
+const ORPHAN_MARKER_RE = /\[\s*\[\s*\/?\s*TG\s*\d{4}\s*\](\s*\])?/gi;
+
+/**
+ * Restore every surviving marker and remove any leftover marker tags.
  *
  * Also counts what it could not enforce. A term whose marker pair did not
  * survive translation keeps the engine's own wording, and the caller needs that
@@ -161,9 +191,11 @@ export function restoreCnkiTerms(
   let restored = 0;
 
   for (const term of terms) {
-    const tag = escapeRegExp(term.tag);
     const wrapped = new RegExp(
-      `\\[\\[\\s*${tag}\\s*\\]\\][\\s\\S]*?\\[\\[\\s*\\/\\s*${tag}\\s*\\]\\]`,
+      `${markerPattern(term.tag, false)}[\\s\\S]*?${markerPattern(
+        term.tag,
+        true,
+      )}`,
       "gi",
     );
     /*
@@ -181,9 +213,9 @@ export function restoreCnkiTerms(
     }
   }
 
-  // If CNKI preserved the Chinese text but separated a tag from its mate,
-  // remove the tag rather than leaking implementation markers into the UI.
-  result = result.replace(/\[\[\s*\/?\s*TG\d{4}\s*\]\]/gi, "");
+  // If the service separated a tag from its mate, remove the orphan rather than
+  // leaking implementation markers into the user's translation.
+  result = result.replace(ORPHAN_MARKER_RE, "");
 
   return {
     text: result,
