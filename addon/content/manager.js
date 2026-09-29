@@ -30,10 +30,45 @@
     return Array.prototype.slice.call((root || document).querySelectorAll(sel));
   };
   var esc = function (s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
+    return (
+      String(s == null ? "" : s)
+        // PDF 提取文本可能夹带 XML 非法控制字符，进入标记就整段抛错
+        // eslint-disable-next-line no-control-regex -- 故意匹配并剥离控制字符
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+        .replace(/[&<>"]/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+        })
+    );
   };
+
+  /*
+   * 本窗口是 XML 文档（XHTML）：innerHTML 在这里走严格 XML 片段解析，
+   * 引文里一个非法字符就会让整段赋值抛错、容器渲染归零。候选卡片正是
+   * 这么消失的。改为先在游离的 HTML 文档里解析（HTML 解析器容错），
+   * 再把节点导入本文档，控件即按 HTML 语义正常渲染。
+   */
+  var htmlDoc = document.implementation.createHTMLDocument("tg");
+
+  function importChildren(source, host) {
+    var frag = document.createDocumentFragment();
+    Array.prototype.forEach.call(source.childNodes, function (node) {
+      frag.appendChild(document.importNode(node, true));
+    });
+    host.replaceChildren(frag);
+  }
+
+  function setHTML(host, html) {
+    var box = htmlDoc.createElement("div");
+    box.innerHTML = html;
+    importChildren(box, host);
+  }
+
+  /** 表格行需要表上下文，直接放 div 里 <tr> 会被 HTML 解析器丢弃。 */
+  function setTableRows(host, html) {
+    var table = htmlDoc.createElement("table");
+    table.innerHTML = html;
+    importChildren(table.tBodies[0] || table, host);
+  }
 
   var METHOD_LABELS = {
     author_note: "作者自注",
@@ -66,9 +101,11 @@
     if (api) return true;
     var host = $("#pending-list");
     if (host) {
-      host.innerHTML =
+      setHTML(
+        host,
         '<div class="empty"><div class="t-title">插件接口不可用</div>' +
-        "<p>请从 Zotero 的条目菜单或工具菜单重新打开本窗口。</p></div>";
+          "<p>请从 Zotero 的条目菜单或工具菜单重新打开本窗口。</p></div>",
+      );
     }
     return false;
   }
@@ -289,32 +326,41 @@
 
     if (!STORE.pending.length) {
       bulk.textContent = "";
-      host.innerHTML =
+      host.replaceChildren();
+      setHTML(
+        host,
         '<div class="empty"><div class="t-title">没有待确认候选</div>' +
-        "<p>术语库已收敛。右键一篇文献选择「提取术语」，引擎会重新跑一轮抽取。</p></div>";
+          "<p>术语库已收敛。右键一篇文献选择「提取术语」，引擎会重新跑一轮抽取。</p></div>",
+      );
       return;
     }
     if (!list.length) {
       bulk.textContent = "共 " + STORE.pending.length + " 条待确认";
-      host.innerHTML =
+      host.replaceChildren();
+      setHTML(
+        host,
         '<div class="empty"><div class="t-title">没有匹配的候选</div>' +
-        "<p>共 " +
-        STORE.pending.length +
-        " 条待确认，当前搜索结果为 0 条。</p></div>";
+          "<p>共 " +
+          STORE.pending.length +
+          " 条待确认，当前搜索结果为 0 条。</p></div>",
+      );
       return;
     }
 
     bulk.textContent =
       "共 " + STORE.pending.length + " 条待确认 · 高分在前 · Enter 逐条过";
-    host.innerHTML = list
-      .map(function (entry) {
-        return cardHtml(
-          entry,
-          STORE.pending.indexOf(entry),
-          STORE.pending.length,
-        );
-      })
-      .join("");
+    setHTML(
+      host,
+      list
+        .map(function (entry) {
+          return cardHtml(
+            entry,
+            STORE.pending.indexOf(entry),
+            STORE.pending.length,
+          );
+        })
+        .join(""),
+    );
   }
 
   function setCurrent(index) {
@@ -468,26 +514,30 @@
     var empty = $("#terms-empty");
 
     if (!STORE.pairs.length) {
-      body.innerHTML = "";
+      body.replaceChildren();
       $("#terms-count").textContent = "";
-      empty.innerHTML =
+      setHTML(
+        empty,
         '<div class="empty"><div class="t-title">术语库是空的</div>' +
-        "<p>右键一篇文献选择「提取术语」，或到「待确认」确认候选，术语对会出现在这里。</p></div>";
+          "<p>右键一篇文献选择「提取术语」，或到「待确认」确认候选，术语对会出现在这里。</p></div>",
+      );
       return;
     }
     if (!list.length) {
-      body.innerHTML = "";
+      body.replaceChildren();
       $("#terms-count").textContent = "共 " + STORE.pairs.length + " 条术语对";
-      empty.innerHTML =
+      setHTML(
+        empty,
         '<div class="empty"><div class="t-title">没有匹配的术语</div>' +
-        "<p>共 " +
-        STORE.pairs.length +
-        " 条术语对，当前筛选结果为 0 条" +
-        (STATE.docFilter ? "（来自文献过滤）" : "") +
-        "。</p></div>";
+          "<p>共 " +
+          STORE.pairs.length +
+          " 条术语对，当前筛选结果为 0 条" +
+          (STATE.docFilter ? "（来自文献过滤）" : "") +
+          "。</p></div>",
+      );
       return;
     }
-    empty.innerHTML = "";
+    empty.replaceChildren();
 
     if (STATE.drift) {
       var groups = {};
@@ -499,30 +549,33 @@
         }
         groups[pair.zh].push(pair);
       });
-      body.innerHTML = order
-        .map(function (zh) {
-          var items = groups[zh];
-          var warn =
-            items.length > 1
-              ? '<span class="pill pill-flag">' +
-                items.length +
-                " 种写法</span>"
-              : '<span class="pill pill-neutral">单一写法</span>';
-          var head =
-            '<tr><td class="group-head" colspan="5">' +
-            '<span class="zh">' +
-            esc(zh) +
-            "</span>" +
-            '<span class="sub" style="margin-left:8px">' +
-            items.length +
-            " 个英文术语对</span>" +
-            '<span style="float:right">' +
-            warn +
-            "</span>" +
-            "</td></tr>";
-          return head + termRows(items);
-        })
-        .join("");
+      setTableRows(
+        body,
+        order
+          .map(function (zh) {
+            var items = groups[zh];
+            var warn =
+              items.length > 1
+                ? '<span class="pill pill-flag">' +
+                  items.length +
+                  " 种写法</span>"
+                : '<span class="pill pill-neutral">单一写法</span>';
+            var head =
+              '<tr><td class="group-head" colspan="5">' +
+              '<span class="zh">' +
+              esc(zh) +
+              "</span>" +
+              '<span class="sub" style="margin-left:8px">' +
+              items.length +
+              " 个英文术语对</span>" +
+              '<span style="float:right">' +
+              warn +
+              "</span>" +
+              "</td></tr>";
+            return head + termRows(items);
+          })
+          .join(""),
+      );
       $("#terms-count").textContent =
         "共 " +
         STORE.pairs.length +
@@ -532,7 +585,7 @@
         list.length +
         " 条";
     } else {
-      body.innerHTML = termRows(list);
+      setTableRows(body, termRows(list));
       $("#terms-count").textContent =
         "共 " + STORE.pairs.length + " 条 · 显示 " + list.length + " 条";
     }
@@ -556,52 +609,59 @@
       });
 
     if (!Object.keys(STORE.items).length) {
-      host.innerHTML = "";
-      empty.innerHTML =
+      host.replaceChildren();
+      setHTML(
+        empty,
         '<div class="empty"><div class="t-title">还没有摄取过文献</div>' +
-        "<p>右键一篇文献选择「提取术语」，摄取完成后文献会出现在这里。</p></div>";
+          "<p>右键一篇文献选择「提取术语」，摄取完成后文献会出现在这里。</p></div>",
+      );
       return;
     }
     if (!list.length) {
-      host.innerHTML = "";
-      empty.innerHTML =
+      host.replaceChildren();
+      setHTML(
+        empty,
         '<div class="empty"><div class="t-title">没有匹配的文献</div>' +
-        "<p>共 " +
-        Object.keys(STORE.items).length +
-        " 篇已摄取文献，当前搜索结果为 0 篇。</p></div>";
+          "<p>共 " +
+          Object.keys(STORE.items).length +
+          " 篇已摄取文献，当前搜索结果为 0 篇。</p></div>",
+      );
       return;
     }
-    empty.innerHTML = "";
-    host.innerHTML = list
-      .map(function (rec) {
-        var pending = pendingCountForItem(rec.itemKey);
-        return (
-          '<button class="doc" type="button" data-doc="' +
-          esc(rec.itemKey) +
-          '">' +
-          '<span class="doc-main">' +
-          '<span class="doc-title">' +
-          esc(rec.title) +
-          "</span>" +
-          '<span class="doc-meta">PDF · <span class="num">' +
-          rec.pages +
-          '</span> 页 · 摄取于 <span class="num">' +
-          esc(rec.extractedAt.slice(0, 10)) +
-          "</span></span>" +
-          "</span>" +
-          '<span class="doc-num">' +
-          '<span class="metric"><span class="v">' +
-          rec.pairs +
-          '</span><br /><span class="k">术语对</span></span>' +
-          '<span class="metric"><span class="v">' +
-          pending +
-          '</span><br /><span class="k">待确认</span></span>' +
-          "</span>" +
-          '<span class="chev" aria-hidden="true">→</span>' +
-          "</button>"
-        );
-      })
-      .join("");
+    empty.replaceChildren();
+    setHTML(
+      host,
+      list
+        .map(function (rec) {
+          var pending = pendingCountForItem(rec.itemKey);
+          return (
+            '<button class="doc" type="button" data-doc="' +
+            esc(rec.itemKey) +
+            '">' +
+            '<span class="doc-main">' +
+            '<span class="doc-title">' +
+            esc(rec.title) +
+            "</span>" +
+            '<span class="doc-meta">PDF · <span class="num">' +
+            rec.pages +
+            '</span> 页 · 摄取于 <span class="num">' +
+            esc(rec.extractedAt.slice(0, 10)) +
+            "</span></span>" +
+            "</span>" +
+            '<span class="doc-num">' +
+            '<span class="metric"><span class="v">' +
+            rec.pairs +
+            '</span><br /><span class="k">术语对</span></span>' +
+            '<span class="metric"><span class="v">' +
+            pending +
+            '</span><br /><span class="k">待确认</span></span>' +
+            "</span>" +
+            '<span class="chev" aria-hidden="true">→</span>' +
+            "</button>"
+          );
+        })
+        .join(""),
+    );
   }
 
   function renderAll() {
@@ -668,15 +728,17 @@
   function toast(message, actionLabel, action) {
     var el = $("#toast");
     clearTimeout(toastTimer);
-    el.innerHTML =
+    setHTML(
+      el,
       "<span>" +
-      esc(message) +
-      "</span>" +
-      (actionLabel
-        ? '<button type="button" id="toast-act">' +
-          esc(actionLabel) +
-          "</button>"
-        : "");
+        esc(message) +
+        "</span>" +
+        (actionLabel
+          ? '<button type="button" id="toast-act">' +
+            esc(actionLabel) +
+            "</button>"
+          : ""),
+    );
     el.classList.add("on");
     if (actionLabel && action) {
       $("#toast-act").addEventListener("click", function () {
