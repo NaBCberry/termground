@@ -109,41 +109,47 @@ export type ManagerApi = ReturnType<typeof createManagerApi>;
 let managerWindow: Window | undefined;
 
 /**
- * Where the window's 「诊断」 button writes its report.
+ * Candidate paths for the window's diagnostics report.
  *
- * Deliberately a file: the Zotero debug log only lives in the error console's
- * memory, and the clipboard can be unavailable, so both are useless when the
- * interface itself is the thing under investigation.
+ * Deliberately files: the Zotero debug log only lives in the error console's
+ * memory and never reaches `.scaffold/logs/zotero-*.log`, and the clipboard
+ * can be unavailable — both are useless when the interface itself is the
+ * thing under investigation. Several candidates are returned so the window
+ * can fall back if the first one cannot be written.
  *
- * The separator is taken from the data directory itself, the same way
- * termStore builds its paths — Mozilla's file APIs reject a mixed
- * "C:\...\Zotero" + "/name.txt" pair with NS_ERROR_FILE_UNRECOGNIZED_PATH.
- * If the directory cannot be determined the key is simply left out of the
- * window arguments and the window reports that no path was provided.
+ * Separators are taken from each directory itself, the same way termStore
+ * builds its paths: Mozilla's file APIs reject a mixed "C:\...\Zotero" +
+ * "/name.txt" pair with NS_ERROR_FILE_UNRECOGNIZED_PATH.
  */
-function diagnosticsFileName(): string | undefined {
-  try {
-    const dir = Zotero.DataDirectory?.dir;
-    if (!dir) {
-      Zotero.debug("TermGround: Zotero.DataDirectory.dir is empty");
-      return undefined;
-    }
+function diagnosticsFileCandidates(): string[] {
+  const name = "termground-manager-diagnostics.txt";
+  const out: string[] = [];
+  const push = (dir: unknown) => {
+    if (typeof dir !== "string" || !dir) return;
     const separator = dir.includes("\\") ? "\\" : "/";
-    const path =
-      dir.replace(/[\\/]+$/, "") +
-      separator +
-      "termground-manager-diagnostics.txt";
-    // Logged at open time so the resolved path is visible even if the in-window
-    // button is never reachable.
-    Zotero.debug("TermGround: manager diagnostics file -> " + path);
-    return path;
+    const path = dir.replace(/[\\/]+$/, "") + separator + name;
+    if (!out.includes(path)) out.push(path);
+  };
+
+  try {
+    push(Zotero.DataDirectory?.dir);
   } catch (error) {
     Zotero.debug(
-      "TermGround: cannot resolve diagnostics path: " +
+      "TermGround: DataDirectory lookup failed: " +
         ((error as Error).message ?? String(error)),
     );
-    return undefined;
   }
+  try {
+    push(Zotero.getMainWindow()?.Zotero?.DataDirectory?.dir);
+  } catch (error) {
+    Zotero.debug(
+      "TermGround: main-window DataDirectory lookup failed: " +
+        ((error as Error).message ?? String(error)),
+    );
+  }
+
+  Zotero.debug("TermGround: manager diagnostics files -> " + out.join(" , "));
+  return out;
 }
 
 function openManagerWindow(): void {
@@ -169,7 +175,7 @@ function openManagerWindow(): void {
       api: addon.api.manager,
       zotero: Zotero,
       services: Services,
-      diagnosticsPath: diagnosticsFileName(),
+      diagnosticsPath: diagnosticsFileCandidates(),
     },
   ) as Window;
   managerWindow = win;

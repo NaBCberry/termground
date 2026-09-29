@@ -235,6 +235,8 @@
     loading: false,
     loadError: null,
     errorKind: null,
+    diagnosticsWritten: false,
+    autoSnapshotLogged: false,
   };
 
   /* ---------------- 派生数据 ---------------- */
@@ -923,6 +925,19 @@
           STATE.docFilter = null;
         }
         renderAll();
+        /*
+         * 只在本次开窗的第一次成功读取后自动写库：开机那一份还没有数据，
+         * 这一份才带得上渲染后的控件计数；之后每次刷新都写会把文件撑爆。
+         */
+        if (!STATE.autoSnapshotLogged) {
+          STATE.autoSnapshotLogged = true;
+          autoWriteDiagnostics(
+            "snapshot-ok pairs=" +
+              (snapshot.pairs || []).length +
+              " pending=" +
+              (snapshot.pending || []).length,
+          );
+        }
       })
       .catch(function (error) {
         STATE.loading = false;
@@ -935,6 +950,7 @@
           "）";
         trace("snapshot failed: " + shortError(error));
         renderAll();
+        autoWriteDiagnostics("snapshot-failed " + shortError(error));
       });
   }
 
@@ -1122,55 +1138,83 @@
   }
 
   /**
-   * 把诊断报告写入文件：Zotero 的调试日志只留在错误控制台内存里，剪贴板又
-   * 可能拿不到，两者都靠不住。开窗方经 window.arguments 传路径进来；没传到
-   * 就说明插件侧取不到数据目录，这时把原因写清楚，别只说"失败"。
+   * 把诊断报告写入文件。
+   *
+   * Zotero 的调试日志只留在错误控制台内存里，不落 .scaffold/logs 那种 .log
+   * 文件，剪贴板又可能拿不到——所以这里自己写文件，而且是开窗就自动写，
+   * 不用等人去点按钮。开窗方经 window.arguments 传候选路径（数组，按顺序
+   * 试）；一条都没写成时先弹框问路径，仍拿不到就只复制剪贴板。
    */
-  function writeDiagnosticsFile(textValue) {
-    var path = launchArgs.diagnosticsPath;
-    if (!path) {
+  function writeTextFile(path, textValue, append) {
+    var io = ServicesRef && ServicesRef.IOUtils;
+    if (io && io.writeUTF8) {
+      io.writeUTF8(path, textValue, append ? { mode: "append" } : undefined);
+      return "IOUtils";
+    }
+    var internal =
+      ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
+        ? ZoteroRef.Utilities.Internal
+        : null;
+    /* saveFile 只能整体覆盖，追加场景下退化为覆盖 */
+    if (internal && internal.saveFile) {
+      internal.saveFile(textValue, path);
+      return "saveFile";
+    }
+    throw new Error("没有可用的写文件接口");
+  }
+
+  function diagnosticsCandidates() {
+    var given = launchArgs.diagnosticsPath;
+    if (typeof given === "string" && given) return [given];
+    if (Array.isArray(given)) return given.slice();
+    return [];
+  }
+
+  function writeDiagnosticsFile(textValue, append, askIfMissing) {
+    var candidates = diagnosticsCandidates();
+    if (!candidates.length && askIfMissing) {
       trace(
-        "diagnostics: 未提供文件路径（开窗方没能取到 Zotero 数据目录；" +
-          "launchArgs keys=" +
+        "diagnostics: 开窗方未提供路径（launchArgs keys=" +
           Object.keys(launchArgs).join(",") +
-          "）",
+          "），询问用户",
       );
-      /* 没拿到路径就问一次，总比只剩"失败"两个字有用 */
       try {
-        path = window.prompt(
+        var asked = window.prompt(
           "诊断报告要写入哪个文件？留空则只复制到剪贴板。",
           "termground-manager-diagnostics.txt",
         );
+        if (asked) candidates = [asked];
       } catch {
-        path = null;
-      }
-      if (!path) {
-        trace("diagnostics: 用户未提供路径");
-        return null;
+        /* prompt 不可用则继续按失败处理 */
       }
     }
-    try {
-      var io = ServicesRef && ServicesRef.IOUtils;
-      if (io && io.writeUTF8) {
-        io.writeUTF8(path, textValue);
-        trace("diagnostics: 已写入 " + path);
-        return path;
-      }
-      var internal =
-        ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
-          ? ZoteroRef.Utilities.Internal
-          : null;
-      if (internal && internal.saveFile) {
-        internal.saveFile(textValue, path);
-        trace("diagnostics: 已写入（saveFile） " + path);
-        return path;
-      }
-      trace("diagnostics: IOUtils 不可用，没能写入文件");
-      return null;
-    } catch (error) {
-      trace("diagnostics: 写入文件失败 " + shortError(error));
+    if (!candidates.length) {
       return null;
     }
+
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        var how = writeTextFile(candidates[i], textValue, append);
+        return { path: candidates[i], how: how };
+      } catch (error) {
+        trace(
+          "diagnostics: 写入 " + candidates[i] + " 失败 " + shortError(error),
+        );
+      }
+    }
+    return null;
+  }
+
+  /** 自动写一次当前诊断；开窗第一条截断旧内容，之后追加。 */
+  function autoWriteDiagnostics(why) {
+    var header =
+      "\n===== " + new Date().toISOString() + " (" + why + ") =====\n";
+    var report = header + diagnosticsText() + "\n";
+    var written = writeDiagnosticsFile(report, STATE.diagnosticsWritten, false);
+    if (written) {
+      STATE.diagnosticsWritten = true;
+    }
+    return written;
   }
 
   function onDiagnostics() {
@@ -1180,20 +1224,27 @@
     } catch {
       /* 忽略 */
     }
-    var written = writeDiagnosticsFile(report);
+    var written = writeDiagnosticsFile(
+      "\n===== " + new Date().toISOString() + " (手动) =====\n" + report + "\n",
+      STATE.diagnosticsWritten,
+      true,
+    );
+    if (written) {
+      STATE.diagnosticsWritten = true;
+    }
 
     if (written) {
       toast(
         copyToClipboard(report)
-          ? "诊断已写入 " + written + "（并复制到剪贴板）"
-          : "诊断已写入 " + written,
+          ? "诊断已写入 " + written.path + "（并复制到剪贴板）"
+          : "诊断已写入 " + written.path,
       );
       return;
     }
     toast(
       copyToClipboard(report)
         ? "诊断信息已复制到剪贴板"
-        : "诊断没能写入文件：路径为空，剪贴板也不可用",
+        : "诊断没能写入文件：没有可用路径，剪贴板也不可用",
     );
   }
 
@@ -1494,6 +1545,9 @@
         document.styleSheets.length,
     );
 
+    /* 开窗即自动写一份：这份文件不依赖点按钮，界面坏了也留得下线索 */
+    autoWriteDiagnostics("boot");
+
     /* 主窗口在提取完成后调用此函数刷新本窗口 */
     window.TermGroundManagerRefresh = function () {
       if (api) refresh();
@@ -1508,6 +1562,7 @@
         !!ServicesRef +
         "）。请从 Zotero 工具菜单重新打开本窗口。";
       renderAll();
+      autoWriteDiagnostics("api-missing");
       return;
     }
 
