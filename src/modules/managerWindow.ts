@@ -125,6 +125,13 @@ function openManagerWindow(): void {
   win.addEventListener(
     "load",
     () => {
+      // loadSubScript resolves the script's free variables against the window
+      // object only. A freshly opened chrome window has no Zotero/TermGround
+      // properties of its own, so hand it the live references from the plugin
+      // context before the script runs — otherwise the script sees neither.
+      const target = win as unknown as Record<string, unknown>;
+      target.Zotero = Zotero;
+      target.TermGround = addon;
       Services.scriptloader.loadSubScript(
         `chrome://${config.addonRef}/content/manager.js`,
         win,

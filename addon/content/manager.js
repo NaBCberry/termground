@@ -7,17 +7,21 @@
 (function () {
   "use strict";
 
-  /* loadSubScript 的作用域解析两种来源都可能出现，做一次防御性解析 */
-  function resolveZotero() {
-    if (typeof Zotero !== "undefined") {
-      return Zotero;
-    }
-    return window.Zotero;
+  /*
+   * managerWindow.ts 在加载本脚本前把 Zotero 与插件对象挂在窗口上
+   * （loadSubScript 的自由变量只沿窗口对象解析，新开的 chrome 窗口
+   * 并没有这两个属性，所以必须由开窗方注入）。这里按窗口属性优先，
+   * 兜底裸全局，兼容将来换成别的宿主方式。
+   */
+  var ZoteroRef = window.Zotero || null;
+  if (!ZoteroRef && typeof Zotero !== "undefined") {
+    ZoteroRef = Zotero;
   }
-
-  var ZoteroRef = resolveZotero();
-  var api =
-    ZoteroRef && ZoteroRef.TermGround ? ZoteroRef.TermGround.api.manager : null;
+  var pluginRoot = window.TermGround;
+  if (!pluginRoot && ZoteroRef) {
+    pluginRoot = ZoteroRef.TermGround;
+  }
+  var api = pluginRoot && pluginRoot.api ? pluginRoot.api.manager : null;
 
   var $ = function (sel, root) {
     return (root || document).querySelector(sel);
@@ -646,6 +650,10 @@
         [pair.en, pair.zh, pair.role, pair.status].map(csvCell).join(","),
       );
     });
+    if (!ZoteroRef || !ZoteroRef.Utilities || !ZoteroRef.Utilities.Internal) {
+      toast("导出失败：无法访问剪贴板接口");
+      return;
+    }
     ZoteroRef.Utilities.Internal.copyTextToClipboard(rows.join("\n"));
     toast(
       "已复制 " +
