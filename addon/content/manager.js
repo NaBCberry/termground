@@ -1463,17 +1463,43 @@
       attempts.push("NetUtil.writeFile: " + shortError(error));
     }
 
-
-    /* 6. 自己拼 nsIFileOutputStream */
+    /*
+     * 6. 自己拼 nsIFileOutputStream。
+     *
+     * 注意：不要依赖 TextEncoder —— chrome 窗口作用域里它可能不存在，而
+     * newFile() 已经把文件建出来了，于是表现为"文件在、内容为空、UI 报
+     * 失败"。这里改用 chrome 里一定有的 writeString()，或
+     * ScriptableInputStream 转换，两条都不碰 TextEncoder。
+     */
     try {
+      var fileForStream = newFile(path);
+      var Cc6 = resolveGlobal("Cc") || resolveGlobal("Components");
+      var Ci6 = resolveGlobal("Ci") || resolveGlobal("Components");
       var stream = newFileOutputStream(path);
-      if (stream) {
-        var bytes = new TextEncoder().encode(textValue);
-        stream.write(bytes, bytes.length);
+      if (stream && Cc6 && Ci6) {
+        var wrote = false;
+        if (typeof stream.writeString === "function") {
+          stream.writeString(textValue);
+          wrote = true;
+        } else if (stream.convertToInputStream) {
+          var converted = stream.convertToInputStream(textValue);
+          var scriptable = Cc6[
+            "@mozilla.org/scriptableinputstream;1"
+          ].createInstance(Ci6.nsIScriptableInputStream);
+          scriptable.init(converted);
+          while (scriptable.available() > 0) {
+            scriptable.read(4096);
+          }
+          wrote = true;
+        }
         stream.close();
-        return "nsIFileOutputStream";
+        if (wrote) {
+          return "nsIFileOutputStream(writeString)";
+        }
+        attempts.push("nsIFileOutputStream 无可用写入方法");
+      } else if (fileForStream) {
+        attempts.push("FileOutputStream 不可用");
       }
-      attempts.push("FileOutputStream 不可用");
     } catch (error) {
       attempts.push("nsIFileOutputStream: " + shortError(error));
     }
@@ -1499,6 +1525,20 @@
       attempts.push("主窗口 Zotero.DataDirectory 不可用");
     } catch (error) {
       attempts.push("Zotero.DataDirectory: " + shortError(error));
+    }
+
+    /*
+     * 全部失败时清掉可能留下的空文件：策略 6 会先建文件再写，写失败就会
+     * 剩一个 0 字节的文件，让人误以为"导出成功了但内容空"。
+     */
+    try {
+      var leftover = newFile(path);
+      if (leftover && leftover.exists() && leftover.fileSize === 0) {
+        leftover.remove(false);
+        attempts.push("已删除写失败留下的空文件");
+      }
+    } catch {
+      /* 删不掉就算了，不影响错误信息 */
     }
 
     throw new Error("没有可用的写文件接口（" + attempts.join("；") + "）");
