@@ -138,17 +138,17 @@
   /**
    * 找到插件的管理接口。
    *
-   * 真实窗口里 window.arguments 与 window.Zotero 都不可靠（实测窗口作用域
-   * 里 Zotero 取不到、Services 能取到，api 直接为 null，界面就只剩"插件
-   * 接口不可用"）。所以这里按可靠性从高到低逐条试：
+   * 实测：window.arguments 有参数但读不到键、窗口作用域里也没有 Zotero，
+   * 所以按可靠性从高到低逐条试，并把命中的通道记下来（诊断里要能看出
+   * 到底走的哪条，否则下次还会在同一个地方打转）：
    *
-   * 1. 开窗方经 window.arguments 传入的 api；
-   * 2. 开窗方直接挂在窗口对象上的 api（跨 compartment 时挂在 wrappedJSObject 上）；
-   * 3. 插件在 Zotero 主窗口上留的引用（Zotero.TermGround 实例）；
-   * 4. 用 Services.wm 枚举窗口，从任一 navigator:browser 主窗口上的
-   *    Zotero.TermGround 取——窗口里有 Services 就够了，不依赖 Zotero
-   *    这个自由变量。
+   * 1. 开窗方在 load 前挂到窗口上的 __TermGroundHost.api；
+   * 2. 同上的 host.zotero → Zotero.TermGround；
+   * 3. host.services 枚举主窗口 → win.Zotero.TermGround；
+   * 4. 窗口作用域/arguments 里任何能拿到的 Zotero。
    */
+  var apiChannel = "none";
+
   function apiFrom(root) {
     if (!root || typeof root !== "object") return null;
     var pluginRoot = root.TermGround;
@@ -193,26 +193,44 @@
   function resolveApi() {
     /* 开窗方注入的宿主优先：里面有直接的 api 引用，绕开所有作用域问题 */
     if (launchArgs.api && launchArgs.api.snapshot) {
+      apiChannel = "host.api";
       return launchArgs.api;
     }
     var fromZoteroRoot = apiFrom(launchArgs.zotero);
-    if (fromZoteroRoot) return fromZoteroRoot;
-    var injected =
-      apiFrom(window) ||
-      apiFrom(
-        (function () {
-          try {
-            return window.wrappedJSObject;
-          } catch {
-            return null;
-          }
-        })(),
-      ) ||
-      apiFrom(window.opener);
-    if (injected) return injected;
+    if (fromZoteroRoot) {
+      apiChannel = "host.zotero";
+      return fromZoteroRoot;
+    }
+    if (apiFrom(window)) {
+      apiChannel = "window";
+      return apiFrom(window);
+    }
+    var raw = (function () {
+      try {
+        return window.wrappedJSObject;
+      } catch {
+        return null;
+      }
+    })();
+    if (apiFrom(raw)) {
+      apiChannel = "wrappedJSObject";
+      return apiFrom(raw);
+    }
+    if (apiFrom(window.opener)) {
+      apiChannel = "opener";
+      return apiFrom(window.opener);
+    }
     var fromGlobal = apiFrom(ZoteroRef) || apiFrom(resolveGlobal("Zotero"));
-    if (fromGlobal) return fromGlobal;
-    return apiFromMainWindow();
+    if (fromGlobal) {
+      apiChannel = "global.Zotero";
+      return fromGlobal;
+    }
+    var fromMain = apiFromMainWindow();
+    if (fromMain) {
+      apiChannel = "mainWindow";
+      return fromMain;
+    }
+    return null;
   }
 
   var api = resolveApi();
@@ -2169,6 +2187,7 @@
         document.styleSheets.length,
     );
     trace("boot: window.arguments -> " + launchArgsProbe);
+    trace("boot: api channel -> " + apiChannel);
     trace(
       "boot: diagnostics candidates -> " + diagnosticsCandidates().join(" , "),
     );
