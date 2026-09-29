@@ -44,7 +44,8 @@ export function normalizeCjkSpacing(text: string): string {
   return text.replace(/(?<=[\u4e00-\u9fff])[ \t]+(?=[\u4e00-\u9fff])/g, "");
 }
 
-const TRIM_CHARS = " \t\r\n,.;:\u3002\uFF0C\uFF1B\uFF1A\u3001\"'\u201C\u201D\u2018\u2019";
+const TRIM_CHARS =
+  " \t\r\n,.;:\u3002\uFF0C\uFF1B\uFF1A\u3001\"'\u201C\u201D\u2018\u2019";
 
 /**
  * Trim whitespace and sentence punctuation, but never brackets: seed entries
@@ -98,10 +99,44 @@ export function splitVariants(zhText: string): string[] {
  * "提出一种结合超宽带（Ultra-Wideband, UWB）" -> "超宽带".
  */
 export const PREFIX_NOISE = [
-  "结合", "采用", "提出", "基于", "利用", "通过", "使用", "构建", "引入",
-  "设计", "实现", "定义", "称为", "记为", "一种", "本文", "以及", "并且",
-  "其中", "对于", "针对", "为了", "能够", "可以", "将该", "进而", "从而",
-  "将", "把", "在", "对", "与", "和", "及", "的", "并", "且", "该",
+  "结合",
+  "采用",
+  "提出",
+  "基于",
+  "利用",
+  "通过",
+  "使用",
+  "构建",
+  "引入",
+  "设计",
+  "实现",
+  "定义",
+  "称为",
+  "记为",
+  "一种",
+  "本文",
+  "以及",
+  "并且",
+  "其中",
+  "对于",
+  "针对",
+  "为了",
+  "能够",
+  "可以",
+  "将该",
+  "进而",
+  "从而",
+  "将",
+  "把",
+  "在",
+  "对",
+  "与",
+  "和",
+  "及",
+  "的",
+  "并",
+  "且",
+  "该",
 ].sort((a, b) => b.length - a.length);
 
 /**
@@ -113,8 +148,20 @@ export const PREFIX_NOISE = [
  * as 同时定位与建图.
  */
 export const BOUNDARY_SUSPECT_TOKENS = [
-  "称为", "提出", "采用", "一种", "本文", "可以", "能够", "将该",
-  "在", "的", "把", "对", "是", "占",
+  "称为",
+  "提出",
+  "采用",
+  "一种",
+  "本文",
+  "可以",
+  "能够",
+  "将该",
+  "在",
+  "的",
+  "把",
+  "对",
+  "是",
+  "占",
 ].sort((a, b) => b.length - a.length);
 
 /** Index and token of the last suspect token inside the run, or null. */

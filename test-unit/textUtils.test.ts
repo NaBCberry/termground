@@ -66,7 +66,10 @@ test("splitSentences does not split on a Chinese semicolon", () => {
 });
 
 test("splitSentences splits on a full stop", () => {
-  assert.deepEqual(splitSentences("第一句。第二句。"), ["第一句。", "第二句。"]);
+  assert.deepEqual(splitSentences("第一句。第二句。"), [
+    "第一句。",
+    "第二句。",
+  ]);
 });
 
 test("splitBlocks breaks before a section heading", () => {
@@ -86,4 +89,3 @@ test("spaces between CJK glyphs are merged", () => {
   assert.equal(normalizeCjkSpacing("遍 历 路 径 规 划"), "遍历路径规划");
   assert.equal(cleanSurface("覆 盖 路 径 规 划"), "覆盖路径规划");
 });
-

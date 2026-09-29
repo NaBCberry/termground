@@ -43,7 +43,9 @@ interface FullTextResult {
  * Zotero exposes the PDF text layer as an untyped global; wrap it so the rest of
  * the code is typed and the call site is easy to find if the API moves.
  */
-async function getAttachmentText(attachmentID: number): Promise<FullTextResult> {
+async function getAttachmentText(
+  attachmentID: number,
+): Promise<FullTextResult> {
   const worker = Zotero.PDFWorker as {
     getFullText(
       itemID: number,
@@ -146,9 +148,7 @@ export async function growFromItems(
     }
     report.evidenceAdded += store.data.evidence.length - evidenceBefore;
     for (const candidate of pending) {
-      if (
-        store.addPending(candidate, { itemKey, itemTitle }) === "new"
-      ) {
+      if (store.addPending(candidate, { itemKey, itemTitle }) === "new") {
         report.pendingAdded++;
       }
     }

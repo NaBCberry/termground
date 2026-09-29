@@ -13,6 +13,7 @@ export type FluentMessageId =
   | 'menuitem-manager'
   | 'menutools-manager'
   | 'pref-base-path'
+  | 'pref-cnki-integration'
   | 'pref-enable'
   | 'pref-help'
   | 'pref-input'

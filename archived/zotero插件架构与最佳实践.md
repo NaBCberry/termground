@@ -12,10 +12,10 @@
 
 Zotero 7 之后插件只有一种形态——bootstrapped extension，由两个文件定义：
 
-| 文件 | 作用 |
-|---|---|
+| 文件                  | 作用                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------- |
 | `addon/manifest.json` | 清单：ID、名称、版本、`applications.zotero.strict_min_version` 与 `strict_max_version` |
-| `addon/bootstrap.js` | 引导脚本：Zotero 在插件的每个生命周期节点回调它 |
+| `addon/bootstrap.js`  | 引导脚本：Zotero 在插件的每个生命周期节点回调它                                        |
 
 代码运行在 Zotero 的**特权 chrome 上下文**里（Zotero 10 基于 Firefox 140 ESR）。这意味着插件能访问 `Components`、`Services`、本地文件系统，也能启动外部进程——这一点决定了第 3 节的技术选型。
 
@@ -59,10 +59,10 @@ npm run release  # 打包发布（生成 xpi 与 update.json）
 
 ### 1.4 Zotero 10 的破坏性变更（动手前必须改掉）
 
-| 项 | 现状 | 必须改成 |
-|---|---|---|
-| `strict_max_version` | 模板写 `8.*` | **`10.0.*`**。用户本机是 Zotero 10.0.2，不改这一项插件根本装不上 |
-| 多选相关 API | —— | 官方已把 `getSelectedCollection()` 这类单数方法改为**抛错**，替换为 `getSelectedCollections()`、`getSelectedLibraryIDs()` 等复数版本。本次功能用不到，但一旦要读选中项就得按新 API 写 |
+| 项                   | 现状         | 必须改成                                                                                                                                                                              |
+| -------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `strict_max_version` | 模板写 `8.*` | **`10.0.*`**。用户本机是 Zotero 10.0.2，不改这一项插件根本装不上                                                                                                                      |
+| 多选相关 API         | ——           | 官方已把 `getSelectedCollection()` 这类单数方法改为**抛错**，替换为 `getSelectedCollections()`、`getSelectedLibraryIDs()` 等复数版本。本次功能用不到，但一旦要读选中项就得按新 API 写 |
 
 ---
 
@@ -70,16 +70,16 @@ npm run release  # 打包发布（生成 xpi 与 update.json）
 
 全部在 `onStartup` 或 `onMainWindowLoad` 里注册，用模板里的 `ztoolkit` 包装调用：
 
-| 扩展点 | API | TermGround 用它做什么 |
-|---|---|---|
-| 条目右键菜单 | `ztoolkit.Menu.register("item", {...})` | 「加入术语库」：把选中的文献摄取进引擎 |
-| 条目面板区块 | `Zotero.ItemPaneManager.registerSection({paneID, pluginID, header, sidenav, onRender, onItemChange})` | 「本文献的术语」：显示该文献贡献了哪些术语对，可跳转证据 |
-| **阅读器划词弹窗** | `Zotero.Reader.registerEventListener("renderTextSelectionPopup", cb, pluginID)` | 读 PDF 时划词，直接显示库里已有的英文表述与出处 |
-| 阅读器侧栏批注头 | 同上，`renderSidebarAnnotationHeader` | 后续可做「批注里的术语校对」 |
-| 阅读器工具栏 | 同上，`renderToolbar` | 可选：一键把当前文献加入术语库 |
-| 条目列表自定义列 | `Zotero.ItemTreeManager` 系列 | 可选：给条目加一列「术语数」 |
-| 偏好面板 | `Zotero.PreferencePanes.register` | 配置引擎路径、服务端口、目标语言 |
-| 通知 | `Zotero.Notifier.registerObserver` | 监听条目与附件变化，自动触发摄取 |
+| 扩展点             | API                                                                                                   | TermGround 用它做什么                                    |
+| ------------------ | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 条目右键菜单       | `ztoolkit.Menu.register("item", {...})`                                                               | 「加入术语库」：把选中的文献摄取进引擎                   |
+| 条目面板区块       | `Zotero.ItemPaneManager.registerSection({paneID, pluginID, header, sidenav, onRender, onItemChange})` | 「本文献的术语」：显示该文献贡献了哪些术语对，可跳转证据 |
+| **阅读器划词弹窗** | `Zotero.Reader.registerEventListener("renderTextSelectionPopup", cb, pluginID)`                       | 读 PDF 时划词，直接显示库里已有的英文表述与出处          |
+| 阅读器侧栏批注头   | 同上，`renderSidebarAnnotationHeader`                                                                 | 后续可做「批注里的术语校对」                             |
+| 阅读器工具栏       | 同上，`renderToolbar`                                                                                 | 可选：一键把当前文献加入术语库                           |
+| 条目列表自定义列   | `Zotero.ItemTreeManager` 系列                                                                         | 可选：给条目加一列「术语数」                             |
+| 偏好面板           | `Zotero.PreferencePanes.register`                                                                     | 配置引擎路径、服务端口、目标语言                         |
+| 通知               | `Zotero.Notifier.registerObserver`                                                                    | 监听条目与附件变化，自动触发摄取                         |
 
 **阅读器为什么必须走 `registerEventListener`**：阅读器界面在 iframe 里，插件无法直接注入 DOM，官方钩子是唯一正路。而且这些事件是**异步**的——弹窗渲染时先 append 一个占位元素，再异步填内容（官方示例就是这么写的）。
 
@@ -93,20 +93,24 @@ npm run release  # 打包发布（生成 xpi 与 update.json）
 
 引擎是 Python，插件是 JS，两者只能通过进程边界通信。三条路：
 
-| 方案 | 做法 | 优点 | 缺点 |
-|---|---|---|---|
-| **A. 调用 CLI** | 插件用 `Zotero.Utilities.Internal.exec` 执行 `python -m termground <子命令> --json` | **引擎一行不用改**，与「引擎转存档」的定位一致；引擎可独立测试；失败边界清晰 | 每次调用有进程启动开销；拿不到进度；stdout 捕获麻烦（XPCOM 下通常要把输出重定向到文件再读） |
-| **B. 常驻本地服务** | 引擎跑已有的 `termground review`，插件用 `Zotero.HTTP.request` 调 REST | 可做进度轮询；浏览器确认界面与插件共用同一份数据；天然支持长任务 | 需要给引擎**新增接口**（现在的服务只有 `/api/state`、`/api/accept`、`/api/reject`）；要处理端口占用与服务未启动 |
-| **C. 用 JS 重写引擎** | —— | 没有进程边界 | 不现实：PDF 解析、抽取规则、SQLite 全在 Python，等于重做 |
+| 方案                  | 做法                                                                                | 优点                                                                         | 缺点                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **A. 调用 CLI**       | 插件用 `Zotero.Utilities.Internal.exec` 执行 `python -m termground <子命令> --json` | **引擎一行不用改**，与「引擎转存档」的定位一致；引擎可独立测试；失败边界清晰 | 每次调用有进程启动开销；拿不到进度；stdout 捕获麻烦（XPCOM 下通常要把输出重定向到文件再读）                     |
+| **B. 常驻本地服务**   | 引擎跑已有的 `termground review`，插件用 `Zotero.HTTP.request` 调 REST              | 可做进度轮询；浏览器确认界面与插件共用同一份数据；天然支持长任务             | 需要给引擎**新增接口**（现在的服务只有 `/api/state`、`/api/accept`、`/api/reject`）；要处理端口占用与服务未启动 |
+| **C. 用 JS 重写引擎** | ——                                                                                  | 没有进程边界                                                                 | 不现实：PDF 解析、抽取规则、SQLite 全在 Python，等于重做                                                        |
 
 `Zotero.HTTP.request` 的用法（来自社区文档）：
 
 ```javascript
-const req = await Zotero.HTTP.request("POST", "http://127.0.0.1:8765/api/resolve", {
-  data: { term: "交叉定位" },
-  headers: { "Content-Type": "application/json" },
-  responseType: "json",
-});
+const req = await Zotero.HTTP.request(
+  "POST",
+  "http://127.0.0.1:8765/api/resolve",
+  {
+    data: { term: "交叉定位" },
+    headers: { "Content-Type": "application/json" },
+    responseType: "json",
+  },
+);
 ```
 
 ### 推荐：A 起步，B 作为第二步
@@ -121,23 +125,23 @@ const req = await Zotero.HTTP.request("POST", "http://127.0.0.1:8765/api/resolve
 
 插件必须显式传这几样，不能依赖工作目录：
 
-| 项 | 为什么 |
-|---|---|
-| `--db <绝对路径>` | 引擎默认用相对路径 `data/termground.db`，而 Zotero 进程的工作目录不是插件目录 |
-| 引擎仓库的绝对路径 | 由用户在偏好里配置；插件启动前检测它是否存在，不存在就给出可执行的提示 |
-| 超时与错误分类 | 要区分「引擎没装」「PDF 解析失败」「该术语未收录」——最后一种不是错误，是本工具的正常结论 |
+| 项                 | 为什么                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `--db <绝对路径>`  | 引擎默认用相对路径 `data/termground.db`，而 Zotero 进程的工作目录不是插件目录            |
+| 引擎仓库的绝对路径 | 由用户在偏好里配置；插件启动前检测它是否存在，不存在就给出可执行的提示                   |
+| 超时与错误分类     | 要区分「引擎没装」「PDF 解析失败」「该术语未收录」——最后一种不是错误，是本工具的正常结论 |
 
 ---
 
 ## 4. 最小可用插件：功能与引擎的映射
 
-| 插件入口 | 引擎调用 | 引擎现状 |
-|---|---|---|
-| 阅读器划词「查术语」 | `resolve <选中文字> --json` | **有，可直接用** |
-| 工具菜单「打开确认界面」 | 启动 `review` 服务并打开浏览器 | **有，可直接用**（复用现有页面，不重写 UI） |
-| 工具菜单「导出术语表」 | `export <out> --format pair --target-lang en-US` | **有，可直接用** |
-| 条目右键「加入术语库」 | `ingest <pdf路径>` | 有，但没有 `--json`，只能解析文本输出或先只报成功 |
-| 条目面板「本文献的术语」 | 按文献列术语对 | 需要新查询（现有 `resolve` 是**按术语查**，不是按文献列） |
+| 插件入口                 | 引擎调用                                         | 引擎现状                                                  |
+| ------------------------ | ------------------------------------------------ | --------------------------------------------------------- |
+| 阅读器划词「查术语」     | `resolve <选中文字> --json`                      | **有，可直接用**                                          |
+| 工具菜单「打开确认界面」 | 启动 `review` 服务并打开浏览器                   | **有，可直接用**（复用现有页面，不重写 UI）               |
+| 工具菜单「导出术语表」   | `export <out> --format pair --target-lang en-US` | **有，可直接用**                                          |
+| 条目右键「加入术语库」   | `ingest <pdf路径>`                               | 有，但没有 `--json`，只能解析文本输出或先只报成功         |
+| 条目面板「本文献的术语」 | 按文献列术语对                                   | 需要新查询（现有 `resolve` 是**按术语查**，不是按文献列） |
 
 **划词查术语是最值得先做的一个**：引擎侧零改动，价值最直观。读者在 PDF 里选中一个中文术语，弹窗里直接显示库里既有的英文表述、可信度分级和出处——哪篇文献的哪一句。这正好把「错误自信比不会答更致命」这条原则落到用户眼前：查不到时它明说未收录，而不是编一个。
 
@@ -152,13 +156,13 @@ const req = await Zotero.HTTP.request("POST", "http://127.0.0.1:8765/api/resolve
 5. **端口与鉴权**：服务只监听 `127.0.0.1`，但本机其他程序也能访问。若要收紧，可以在启动时生成随机 token 存进偏好，请求时带上。
 6. **命名空间要一次改干净**：`package.json` 的 `config` 块里五个占位符都得换，否则 `chrome://` 资源路径、FTL 前缀、偏好前缀会互相打架。
 
-| 占位符 | 模板值 | 应改为 |
-|---|---|---|
-| `addonName` | Zotero Plugin Template | TermGround（待定） |
-| `addonID` | addontemplate@euclpts.com | 唯一的邮箱式 ID |
-| `addonRef` | addontemplate | termground（小写，用于 chrome:// 与 FTL 前缀） |
-| `addonInstance` | AddonTemplate | TermGround（挂在 Zotero 上的全局对象名） |
-| `prefsPrefix` | extensions.zotero.addontemplate | extensions.zotero.termground |
+| 占位符          | 模板值                          | 应改为                                         |
+| --------------- | ------------------------------- | ---------------------------------------------- |
+| `addonName`     | Zotero Plugin Template          | TermGround（待定）                             |
+| `addonID`       | addontemplate@euclpts.com       | 唯一的邮箱式 ID                                |
+| `addonRef`      | addontemplate                   | termground（小写，用于 chrome:// 与 FTL 前缀） |
+| `addonInstance` | AddonTemplate                   | TermGround（挂在 Zotero 上的全局对象名）       |
+| `prefsPrefix`   | extensions.zotero.addontemplate | extensions.zotero.termground                   |
 
 7. **模板的示例代码要清掉**：`src/modules/examples.ts` 有 800 多行演示（额外列、对话框、快捷键、剪贴板、右键菜单……），`hooks.ts` 里逐个调用它们。留着会让调试输出充满噪声，也会在 Zotero 界面上多出一堆无意义的菜单项。
 
@@ -176,8 +180,8 @@ const req = await Zotero.HTTP.request("POST", "http://127.0.0.1:8765/api/resolve
 
 ## 7. 待确认
 
-| # | 问题 | 影响 |
-|---|---|---|
-| 1 | 引擎仓库是否真的冻结？`ingest` 与 `stats` 要不要补 `--json` | 决定第 3 节选 A 还是 A+B |
-| 2 | 插件的产品名与 `addonID` 取什么 | 决定第 5 节第 6 条的五个占位符取值 |
-| 3 | 第一版是否只做「划词查术语」 | 决定第 6 节的实施顺序 |
+| #   | 问题                                                        | 影响                               |
+| --- | ----------------------------------------------------------- | ---------------------------------- |
+| 1   | 引擎仓库是否真的冻结？`ingest` 与 `stats` 要不要补 `--json` | 决定第 3 节选 A 还是 A+B           |
+| 2   | 插件的产品名与 `addonID` 取什么                             | 决定第 5 节第 6 条的五个占位符取值 |
+| 3   | 第一版是否只做「划词查术语」                                | 决定第 6 节的实施顺序              |
