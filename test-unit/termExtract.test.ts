@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   extractFromSegments,
   findAuthorNotes,
+  findEnglishAbbreviations,
   findEnglishFirstNotes,
   isPlausiblePair,
   refineZhBoundary,
@@ -64,6 +65,35 @@ test("English-first glosses are read from the parentheses", () => {
   assert.equal(notes[0].certain, true);
 });
 
+test("English abbreviation definitions become review candidates", () => {
+  const terms = findEnglishAbbreviations(
+    "We benchmark Automated Machine Learning (AutoML) frameworks and Large Language Models (LLMs).",
+  );
+  assert.deepEqual(terms, [
+    { en: "Automated Machine Learning", abbr: "AutoML" },
+    { en: "Large Language Models", abbr: "LLMs" },
+  ]);
+
+  const { candidates, stats } = extractFromSegments(
+    [
+      {
+        page: 2,
+        section: "body",
+        text: "Automated Machine Learning (AutoML) improves model selection.",
+      },
+    ],
+    new Set(),
+  );
+  const candidate = candidates.find(
+    (entry) => entry.method === "english_abbreviation",
+  );
+  assert.ok(candidate);
+  assert.equal(candidate.zh, "");
+  assert.equal(candidate.en, "Automated Machine Learning");
+  assert.equal(stats.englishAbbreviations, 1);
+  assert.equal(selectPromotable(candidates).length, 0);
+});
+
 const PAPER: Segment[] = [
   {
     page: 1,
@@ -112,7 +142,13 @@ test("author glosses and keyword pairs are both extracted", () => {
 
 test("every evidence quote carries the page it came from", () => {
   const { candidates } = extractFromSegments(
-    [{ page: 7, section: "method", text: "采用超宽带（Ultra-Wideband）测距。" }],
+    [
+      {
+        page: 7,
+        section: "method",
+        text: "采用超宽带（Ultra-Wideband）测距。",
+      },
+    ],
     new Set(),
   );
   const gloss = candidates.find((c) => c.method === "author_note");
@@ -224,15 +260,24 @@ test("pseudo-code glosses are rejected", () => {
 
 test("shredded English keywords are rejected", () => {
   assert.equal(
-    isPlausiblePair("分布式模型预测控制", "dist rib ut ed model predicti ve cont r ol"),
+    isPlausiblePair(
+      "分布式模型预测控制",
+      "dist rib ut ed model predicti ve cont r ol",
+    ),
     false,
   );
-  assert.equal(isPlausiblePair("避开障碍物和威胁源", "Revised:2015-05-24"), false);
+  assert.equal(
+    isPlausiblePair("避开障碍物和威胁源", "Revised:2015-05-24"),
+    false,
+  );
 });
 
 test("plausible pairs still pass the guard", () => {
   assert.equal(isPlausiblePair("覆盖路径规划", "coverage path planning"), true);
-  assert.equal(isPlausiblePair("无人机集群", "unmanned aerial vehicle swarm"), true);
+  assert.equal(
+    isPlausiblePair("无人机集群", "unmanned aerial vehicle swarm"),
+    true,
+  );
 });
 
 test("CJK-only Chinese is required", () => {
