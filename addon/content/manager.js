@@ -1390,9 +1390,9 @@
   function writeAnyFile(path, textValue, append) {
     var attempts = [];
 
-    /* 1. Services.IOUtils.writeUTF8 —— Gecko 推荐的异步文件 API */
+    /* 1. IOUtils（直接 import 或从任一可用 Services 拿）——Gecko 官方文件 API */
     try {
-      var io = ServicesRef && ServicesRef.IOUtils;
+      var io = ioUtils();
       if (io && io.writeUTF8) {
         io.writeUTF8(path, textValue, append ? { mode: "append" } : undefined);
         return "IOUtils.writeUTF8";
@@ -1418,43 +1418,39 @@
     }
 
     /*
-     * 3. IOUtils 仍以路径工作时，直接借主窗口作用域里的 IOUtils——
-     *    这是唯一确定存在且确定能写的组合（主窗口要读写 terms.json）。
+     * 3. 直接 import 的 IOUtils：管理窗口里 Services.IOUtils 不存在，
+     *    这条才是主路。
      */
     try {
-      var hostIO = mainWindowIOUtils();
-      if (hostIO && hostIO.writeUTF8) {
-        hostIO.writeUTF8(
+      var ownIO = ioUtils();
+      if (ownIO && ownIO.writeUTF8) {
+        ownIO.writeUTF8(
           path,
           textValue,
           append ? { mode: "append" } : undefined,
         );
-        return "mainWindow.IOUtils.writeUTF8";
+        return "IOUtils.writeUTF8(imported)";
       }
-      attempts.push("主窗口 IOUtils 不可用");
+      attempts.push("import IOUtils 不可用");
     } catch (error) {
-      attempts.push("主窗口 IOUtils: " + shortError(error));
+      attempts.push("import IOUtils: " + shortError(error));
     }
 
-    /* 4. PathUtils 拼出 file:// URI 再写：Gecko 上最正统的写法 */
+    /* 4. PathUtils 拼 file:// URI 再写 */
     try {
-      var hostPathUtils = mainWindowPathUtils();
-      var hostIO2 = mainWindowIOUtils();
-      if (hostPathUtils && hostIO2 && hostPathUtils.toFileURI) {
-        var uri = hostPathUtils.toFileURI(
-          hostPathUtils.join
-            ? hostPathUtils.join(String(path).replace(/\\/g, "/").split("/"))
-            : path,
-        );
-        hostIO2.writeUTF8(uri, textValue);
+      var pu = pathUtils();
+      var ioForUri = ioUtils();
+      if (pu && ioForUri && pu.toFileURI) {
+        var uri = pu.toFileURI(String(path).replace(/\\/g, "/"));
+        ioForUri.writeUTF8(uri, textValue);
         return "IOUtils.writeUTF8(PathUtils.toFileURI)";
       }
-      attempts.push("主窗口 PathUtils 不可用");
+      attempts.push("PathUtils 不可用");
     } catch (error) {
       attempts.push("PathUtils.toFileURI: " + shortError(error));
     }
 
-    /* 5. nsIFile + NetUtil 的文件流，最原始也最不依赖上层封装 */
+    /* 5. nsIFile + NetUtil 的文件流 */
     try {
       var NetUtil = resolveGlobal("NetUtil");
       var file = newFile(path);
@@ -1466,6 +1462,7 @@
     } catch (error) {
       attempts.push("NetUtil.writeFile: " + shortError(error));
     }
+
 
     /* 6. 自己拼 nsIFileOutputStream */
     try {
@@ -1505,6 +1502,124 @@
     }
 
     throw new Error("没有可用的写文件接口（" + attempts.join("；") + "）");
+  }
+
+  /**
+   * 直接解析 IOUtils / PathUtils 模块。
+   *
+   * 实测管理窗口里 Services.IOUtils 不存在（Services 有 wm，但没有 IOUtils），
+   * 主窗口又枚举不到，所以不能再指望"借别人的 Services"。这里按官方模块加载
+   * 方式自己把 IOUtils.sys.mjs / PathUtils.sys.mjs 拿进来——只要窗口是 chrome
+   * 特权作用域就成立，不依赖任何其它窗口。
+   */
+  var moduleCache = {};
+
+  function importModule(uri) {
+    if (moduleCache[uri] !== undefined) return moduleCache[uri];
+    var found = null;
+    var ChromeUtilsRef = resolveGlobal("ChromeUtils");
+    try {
+      if (ChromeUtilsRef && ChromeUtilsRef.importESModule) {
+        found = ChromeUtilsRef.importESModule(uri);
+      }
+    } catch (error) {
+      trace("import " + uri + " 失败: " + shortError(error));
+    }
+    if (!found) {
+      try {
+        if (typeof ChromeUtils !== "undefined" && ChromeUtils.importESModule) {
+          found = ChromeUtils.importESModule(uri);
+        }
+      } catch (error) {
+        trace("import(裸全局) " + uri + " 失败: " + shortError(error));
+      }
+    }
+    moduleCache[uri] = found;
+    return found;
+  }
+
+  function ioUtils() {
+    var direct = ServicesRef && ServicesRef.IOUtils;
+    if (direct && direct.writeUTF8) return direct;
+    var host = launchArgs.services && launchArgs.services.IOUtils;
+    if (host && host.writeUTF8) return host;
+    var mod = importModule("resource://gre/modules/IOUtils.sys.mjs");
+    if (mod && mod.IOUtils && mod.IOUtils.writeUTF8) return mod.IOUtils;
+    if (mod && mod.writeUTF8) return mod;
+    var main = mainWindowIOUtils();
+    if (main && main.writeUTF8) return main;
+    return null;
+  }
+
+  function pathUtils() {
+    var mod = importModule("resource://gre/modules/PathUtils.sys.mjs");
+    if (mod && mod.PathUtils) return mod.PathUtils;
+    var main = mainWindowPathUtils();
+    return main || null;
+  }
+
+  /**
+   * 环境自检里再补一段文件 API 的实况：IOUtils 从哪来、各窗口什么类型、
+   * 哪个窗口带 Zotero。下一次写文件再失败时，这条就是决定性的。
+   */
+  function probeFileApis() {
+    var lines = [];
+    lines.push(
+      "ioUtils=" +
+        (ioUtils() ? "yes" : "no") +
+        " pathUtils=" +
+        (pathUtils() ? "yes" : "no") +
+        " directIOUtils=" +
+        !!(ServicesRef && ServicesRef.IOUtils) +
+        " hostServicesIOUtils=" +
+        !!(launchArgs.services && launchArgs.services.IOUtils),
+    );
+    try {
+      var ChromeUtilsRef = resolveGlobal("ChromeUtils");
+      lines.push(
+        "chromeUtils=" +
+          (ChromeUtilsRef
+            ? "yes importESModule=" + !!ChromeUtilsRef.importESModule
+            : "no"),
+      );
+    } catch (error) {
+      lines.push("chromeUtils threw " + shortError(error));
+    }
+    try {
+      if (ServicesRef && ServicesRef.wm) {
+        var all = ServicesRef.wm.getEnumerator(null);
+        var count = 0;
+        var kinds = [];
+        while (all.hasMoreElements() && count < 12) {
+          var w = all.getNext();
+          count++;
+          var type = "";
+          try {
+            type =
+              w.document && w.document.documentElement
+                ? String(w.document.documentElement.getAttribute("windowtype"))
+                : "?";
+          } catch {
+            type = "unreadable";
+          }
+          var hasZotero = false;
+          try {
+            hasZotero = !!w.Zotero;
+          } catch {
+            hasZotero = false;
+          }
+          kinds.push(type + (hasZotero ? "+Zotero" : ""));
+        }
+        lines.push("windows=" + count + " [" + kinds.join(" | ") + "]");
+      } else {
+        lines.push("wm=missing");
+      }
+    } catch (error) {
+      lines.push("wm enumerate threw " + shortError(error));
+    }
+    var summary = lines.join("；");
+    trace("probeFileApis -> " + summary);
+    return summary;
   }
 
   /** 主窗口作用域里的 Services（借用它的 IOUtils）。 */
@@ -2192,6 +2307,7 @@
       "boot: diagnostics candidates -> " + diagnosticsCandidates().join(" , "),
     );
     probeEnvironment();
+    probeFileApis();
 
     /* 开窗即自动写一份：这份文件不依赖点按钮，界面坏了也留得下线索 */
     autoWriteDiagnostics("boot");
