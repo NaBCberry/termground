@@ -1121,6 +1121,40 @@
       });
   }
 
+  /**
+   * 诊断信息落盘：Zotero 的调试日志只留在错误控制台内存里，剪贴板又可能被
+   * 策略禁掉，两者都靠不住。直接写文件，出问题时把路径给我即可。
+   */
+  function writeDiagnosticsFile(textValue) {
+    var path = launchArgs.diagnosticsPath;
+    if (!path) {
+      trace("diagnostics: 未提供落盘路径");
+      return null;
+    }
+    try {
+      var io = ServicesRef && ServicesRef.IOUtils;
+      if (io && io.writeUTF8) {
+        io.writeUTF8(path, textValue);
+        trace("diagnostics: wrote " + path);
+        return path;
+      }
+      var internal =
+        ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
+          ? ZoteroRef.Utilities.Internal
+          : null;
+      if (internal && internal.saveFile) {
+        internal.saveFile(textValue, path);
+        trace("diagnostics: wrote (zt.saveFile) " + path);
+        return path;
+      }
+      trace("diagnostics: IOUtils 不可用，未能落盘");
+      return null;
+    } catch (error) {
+      trace("diagnostics: 落盘失败 " + shortError(error));
+      return null;
+    }
+  }
+
   function onDiagnostics() {
     var report = diagnosticsText();
     try {
@@ -1128,12 +1162,21 @@
     } catch {
       /* 忽略 */
     }
-    trace("diagnostics copied; styleSheets=" + document.styleSheets.length);
-    if (copyToClipboard(report)) {
-      toast("诊断信息已复制到剪贴板");
-    } else {
-      toast("诊断信息已写入 Zotero 调试日志（剪贴板不可用）");
+    var written = writeDiagnosticsFile(report);
+
+    if (written) {
+      toast(
+        copyToClipboard(report)
+          ? "诊断已落盘并复制到剪贴板"
+          : "诊断已写入 " + written,
+      );
+      return;
     }
+    toast(
+      copyToClipboard(report)
+        ? "诊断信息已复制到剪贴板"
+        : "诊断未能落盘：未提供路径，剪贴板也不可用，请看 Zotero 调试日志",
+    );
   }
 
   function bindEvents() {

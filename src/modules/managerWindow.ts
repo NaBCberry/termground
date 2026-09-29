@@ -108,6 +108,27 @@ export type ManagerApi = ReturnType<typeof createManagerApi>;
 
 let managerWindow: Window | undefined;
 
+/**
+ * Where the window's 「诊断」 button writes its report.
+ *
+ * Deliberately on disk: the Zotero debug log only lives in the error console
+ * in memory, and the clipboard can be unavailable, so both are useless when
+ * the interface itself is the thing under investigation.
+ */
+function diagnosticsPath(): string | undefined {
+  try {
+    const PathUtils = ztoolkit.getGlobal("PathUtils");
+    const dir = Zotero.DataDirectory.dir;
+    return PathUtils.join(dir, "termground-manager-diagnostics.txt");
+  } catch (error) {
+    Zotero.debug(
+      "TermGround: diagnostics path unavailable: " +
+        ((error as Error).message ?? String(error)),
+    );
+    return undefined;
+  }
+}
+
 function openManagerWindow(): void {
   if (isWindowAlive(managerWindow)) {
     managerWindow!.focus();
@@ -131,6 +152,7 @@ function openManagerWindow(): void {
       api: addon.api.manager,
       zotero: Zotero,
       services: Services,
+      diagnosticsPath: diagnosticsPath(),
     },
   ) as Window;
   managerWindow = win;
