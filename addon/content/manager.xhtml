@@ -92,6 +92,8 @@ type="text/css"?>
       </div>
     </header>
 
+    <div class="err-banner" id="error-banner" hidden="hidden"></div>
+
     <div class="pipe">
       <div class="wrap pipe-in">
         <div class="pipe-stages">
@@ -228,6 +230,14 @@ type="text/css"?>
           <span class="h"><span class="kbd">S</span> 跳过</span>
         </div>
         <span class="right" id="footer-right"></span>
+        <button
+          class="btn btn-ghost btn-compact diag-btn"
+          id="diagnostics"
+          type="button"
+          title="复制窗口渲染诊断信息，便于定位「控件不显示」一类问题"
+        >
+          诊断
+        </button>
       </div>
     </footer>
 

@@ -114,24 +114,29 @@ function openManagerWindow(): void {
     return;
   }
   const Services = ztoolkit.getGlobal("Services");
+  /*
+   * Pass the plugin API and the two host objects through window.arguments
+   * instead of reaching in afterwards. loadSubScript resolves the window
+   * script's free variables against the target window, and what that scope
+   * happens to expose is not something this side can verify — a reference
+   * passed in as an argument is the window's own, so the window script never
+   * has to guess how the host injected it.
+   */
   const win = Services.ww.openWindow(
     null,
     `chrome://${config.addonRef}/content/manager.xhtml`,
     `${config.addonRef}-manager`,
     "chrome,dialog=no,resizable=yes,centerscreen,width=1120,height=760",
-    null,
+    {
+      api: addon.api.manager,
+      zotero: Zotero,
+      services: Services,
+    },
   ) as Window;
   managerWindow = win;
   win.addEventListener(
     "load",
     () => {
-      // loadSubScript resolves the script's free variables against the window
-      // object only. A freshly opened chrome window has no Zotero/TermGround
-      // properties of its own, so hand it the live references from the plugin
-      // context before the script runs — otherwise the script sees neither.
-      const target = win as unknown as Record<string, unknown>;
-      target.Zotero = Zotero;
-      target.TermGround = addon;
       Services.scriptloader.loadSubScript(
         `chrome://${config.addonRef}/content/manager.js`,
         win,

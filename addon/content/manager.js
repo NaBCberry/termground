@@ -2,74 +2,211 @@
  * TermGround 管理窗口脚本。
  *
  * 由 managerWindow.ts 通过 Services.scriptloader.loadSubScript 注入窗口作用域，
- * 数据一律经 Zotero.TermGround.api.manager 读写，不直接触碰存储层。
+ * 数据一律经 api（addon.api.manager）读写，不直接触碰存储层。
+ *
+ * 两条硬规则，都是被真实故障换来的：
+ *
+ * 1) 本窗口是 application/xhtml+xml 文档，innerHTML 走严格 XML 片段解析，
+ *    PDF 引文里一个非法字符就能让整段赋值抛错、容器渲染归零。所以这里
+ *    一律用 createElementNS 建节点，不拼标记字符串——不是"过滤得更干净"，
+ *    而是根本不经过解析器。
+ *
+ * 2) 任何一步失败都要在窗口里留下可见痕迹。以前失败只弹 3.6 秒的 toast，
+ *    窗口里什么都留不下，于是"渲染压根没跑"和"渲染跑了但为空"长得一模
+ *    一样。现在启动失败写进错误横幅，刷新失败写进列表本身，每一步记进
+ *    诊断日志（页脚「诊断」按钮可直接复制）。
  */
 (function () {
   "use strict";
 
-  /*
-   * managerWindow.ts 在加载本脚本前把 Zotero 与插件对象挂在窗口上
-   * （loadSubScript 的自由变量只沿窗口对象解析，新开的 chrome 窗口
-   * 并没有这两个属性，所以必须由开窗方注入）。这里按窗口属性优先，
-   * 兜底裸全局，兼容将来换成别的宿主方式。
-   */
-  var ZoteroRef = window.Zotero || null;
-  if (!ZoteroRef && typeof Zotero !== "undefined") {
-    ZoteroRef = Zotero;
-  }
-  var pluginRoot = window.TermGround;
-  if (!pluginRoot && ZoteroRef) {
-    pluginRoot = ZoteroRef.TermGround;
-  }
-  var api = pluginRoot && pluginRoot.api ? pluginRoot.api.manager : null;
+  var XHTML = "http://www.w3.org/1999/xhtml";
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var STYLESHEET_HREF = "chrome://termground/content/manager.css";
 
-  var $ = function (sel, root) {
+  /* ---------------- 宿主引用解析 ---------------- */
+  /*
+   * loadSubScript 的自由变量解析路径随宿主而异（裸全局 / 目标窗口属性），
+   * 所以先看开窗方传进来的 window.arguments，再逐条兜底。取不到就明确
+   * 报错，绝不静默降级成空界面。
+   */
+  var launchArgs = (window && window.arguments && window.arguments[0]) || {};
+
+  function resolveGlobal(name) {
+    try {
+      if (typeof window !== "undefined" && window && window[name]) {
+        return window[name];
+      }
+    } catch {
+      /* 跨 compartment 访问可能抛错，继续尝试下一条路径 */
+    }
+    try {
+      return eval(name);
+    } catch {
+      return null;
+    }
+  }
+
+  var ZoteroRef = launchArgs.zotero || resolveGlobal("Zotero");
+  var ServicesRef = launchArgs.services || resolveGlobal("Services");
+
+  /** 开窗方传入的接口优先，其次从 Zotero 上的插件实例取。 */
+  function resolveApi() {
+    if (launchArgs.api && launchArgs.api.snapshot) {
+      return launchArgs.api;
+    }
+    var root = ZoteroRef && ZoteroRef.TermGround;
+    var candidate = root && root.api ? root.api.manager : null;
+    return candidate && candidate.snapshot ? candidate : null;
+  }
+
+  var api = resolveApi();
+
+  /* ---------------- 诊断 ---------------- */
+  var DIAG = [];
+
+  /** 记一行诊断：进 Zotero 调试日志，同时留给页脚「诊断」按钮复制。 */
+  function trace(message) {
+    DIAG.push(message);
+    if (DIAG.length > 300) {
+      DIAG.shift();
+    }
+    try {
+      if (ZoteroRef && ZoteroRef.debug) {
+        ZoteroRef.debug("TermGround[manager] " + message);
+      }
+    } catch {
+      /* 调试日志本身失败不影响界面 */
+    }
+  }
+
+  function errorName(error) {
+    return error && error.name ? error.name : "Error";
+  }
+
+  function shortError(error) {
+    var message = error && error.message ? error.message : String(error);
+    return message.length > 120 ? message.slice(0, 120) + "…" : message;
+  }
+
+  function styleOf(selector) {
+    var node = document.querySelector(selector);
+    if (!node || !window.getComputedStyle) return "n/a";
+    return window.getComputedStyle(node);
+  }
+
+  function diagnosticsText() {
+    var cards = document.querySelectorAll("#pending-list .card").length;
+    var inputs = document.querySelectorAll("#pending-list input").length;
+    var buttons = document.querySelectorAll("#pending-list button").length;
+    var topbar = styleOf(".topbar");
+    var search = styleOf("#q");
+    var host = document.querySelector("#pending-list");
+    return [
+      "TermGround 管理窗口诊断",
+      "contentType=" + document.contentType,
+      "styleSheets=" + document.styleSheets.length,
+      "topbarPosition=" + (topbar === "n/a" ? topbar : topbar.position),
+      "searchBoxShadow=" + (search === "n/a" ? search : search.boxShadow),
+      "hasZotero=" + !!ZoteroRef,
+      "hasServices=" + !!ServicesRef,
+      "hasApi=" + !!api,
+      "cards=" + cards + " inputs=" + inputs + " buttons=" + buttons,
+      "pendingListText=" + ((host && host.textContent) || "").slice(0, 80),
+      "",
+      "-- trace --",
+    ]
+      .concat(DIAG)
+      .join("\n");
+  }
+
+  /* ---------------- 选择器与 DOM 工具 ---------------- */
+
+  function $(sel, root) {
     return (root || document).querySelector(sel);
-  };
-  var $$ = function (sel, root) {
+  }
+
+  function $$(sel, root) {
     return Array.prototype.slice.call((root || document).querySelectorAll(sel));
-  };
-  var esc = function (s) {
-    return (
-      String(s == null ? "" : s)
-        // PDF 提取文本可能夹带 XML 非法控制字符，进入标记就整段抛错
-        // eslint-disable-next-line no-control-regex -- 故意匹配并剥离控制字符
-        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
-        .replace(/[&<>"]/g, function (c) {
-          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-        })
+  }
+
+  function text(value) {
+    return document.createTextNode(
+      value === null || value === undefined ? "" : String(value),
     );
-  };
+  }
 
-  /*
-   * 本窗口是 XML 文档（XHTML）：innerHTML 在这里走严格 XML 片段解析，
-   * 引文里一个非法字符就会让整段赋值抛错、容器渲染归零。候选卡片正是
-   * 这么消失的。改为先在游离的 HTML 文档里解析（HTML 解析器容错），
-   * 再把节点导入本文档，控件即按 HTML 语义正常渲染。
-   */
-  var htmlDoc = document.implementation.createHTMLDocument("tg");
+  function att(node, name, value) {
+    if (value === null || value === undefined || value === false) return node;
+    if (value === true) {
+      node.setAttribute(name, name);
+      return node;
+    }
+    node.setAttribute(name, String(value));
+    return node;
+  }
 
-  function importChildren(source, host) {
-    var frag = document.createDocumentFragment();
-    Array.prototype.forEach.call(source.childNodes, function (node) {
-      frag.appendChild(document.importNode(node, true));
+  function appendAll(host, children) {
+    if (children === null || children === undefined || children === false) {
+      return host;
+    }
+    var list = Array.isArray(children) ? children : [children];
+    list.forEach(function (child) {
+      if (child === null || child === undefined || child === false) return;
+      host.appendChild(typeof child === "string" ? text(child) : child);
     });
-    host.replaceChildren(frag);
+    return host;
   }
 
-  function setHTML(host, html) {
-    var box = htmlDoc.createElement("div");
-    box.innerHTML = html;
-    importChildren(box, host);
+  function el(tag, attrs, children) {
+    var node = document.createElementNS(XHTML, tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (key) {
+        att(node, key, attrs[key]);
+      });
+    }
+    return appendAll(node, children);
   }
 
-  /** 表格行需要表上下文，直接放 div 里 <tr> 会被 HTML 解析器丢弃。 */
-  function setTableRows(host, html) {
-    var table = htmlDoc.createElement("table");
-    table.innerHTML = html;
-    importChildren(table.tBodies[0] || table, host);
+  /** 用节点树替换宿主内容。 */
+  function fill(host, children) {
+    if (!host) return;
+    host.replaceChildren();
+    appendAll(host, children);
   }
 
+  function span(className, children) {
+    return el("span", { class: className }, children);
+  }
+
+  function emptyState(title, message) {
+    return el("div", { class: "empty" }, [
+      el("div", { class: "t-title" }, title),
+      el("p", null, message),
+    ]);
+  }
+
+  /** 同命名空间图标：直接建 SVG 元素，不经过任何解析。 */
+  function svgIcon(size, viewBox, children) {
+    var svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("width", String(size));
+    svg.setAttribute("height", String(size));
+    svg.setAttribute("viewBox", viewBox);
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.4");
+    svg.setAttribute("aria-hidden", "true");
+    return appendAll(svg, children);
+  }
+
+  function svgPart(tag, attrs) {
+    var node = document.createElementNS(SVGNS, tag);
+    Object.keys(attrs).forEach(function (key) {
+      node.setAttribute(key, String(attrs[key]));
+    });
+    return node;
+  }
+
+  /* ---------------- 常量 ---------------- */
   var METHOD_LABELS = {
     author_note: "作者自注",
     english_note: "英文自注",
@@ -95,20 +232,10 @@
     current: 0,
     docFilter: null,
     expanded: {},
+    loading: false,
+    loadError: null,
+    errorKind: null,
   };
-
-  function ensureApi() {
-    if (api) return true;
-    var host = $("#pending-list");
-    if (host) {
-      setHTML(
-        host,
-        '<div class="empty"><div class="t-title">插件接口不可用</div>' +
-          "<p>请从 Zotero 的条目菜单或工具菜单重新打开本窗口。</p></div>",
-      );
-    }
-    return false;
-  }
 
   /* ---------------- 派生数据 ---------------- */
 
@@ -142,10 +269,9 @@
     var same = STORE.pairs.filter(function (pair) {
       return pair.zh === entry.zh;
     });
-    var others = same.filter(function (pair) {
+    return same.filter(function (pair) {
       return !entry.en || pair.en !== entry.en;
     });
-    return others;
   }
 
   function pendingCountForItem(itemKey) {
@@ -158,20 +284,54 @@
     return STORE.items[itemKey] ? STORE.items[itemKey].title : "";
   }
 
+  /* ---------------- 渲染：错误横幅 ---------------- */
+
+  /** 把失败摆在窗口最上方：界面"少东西"时先看这里。 */
+  function renderErrorBanner() {
+    var host = $("#error-banner");
+    if (!host) {
+      trace("renderErrorBanner: #error-banner 缺失");
+      return;
+    }
+    if (!STATE.loadError) {
+      host.hidden = true;
+      fill(host, null);
+      return;
+    }
+    host.hidden = false;
+    fill(host, [
+      el(
+        "div",
+        { class: "err-head" },
+        STATE.errorKind === "markup" ? "界面标记未能渲染" : "术语库读取失败",
+      ),
+      el("div", { class: "err-body" }, STATE.loadError),
+      el(
+        "div",
+        { class: "err-hint" },
+        "点页脚「诊断」复制完整信息，或查看 Zotero 调试日志。",
+      ),
+    ]);
+  }
+
   /* ---------------- 渲染：计数 ---------------- */
 
   function renderCounts() {
     var c = STORE.counts;
     var drift = driftGroups().length;
-    $$("[data-count]").forEach(function (el) {
-      var k = el.getAttribute("data-count");
-      if (c[k] !== undefined) {
-        el.textContent = c[k];
+    $$("[data-count]").forEach(function (node) {
+      var key = node.getAttribute("data-count");
+      if (c[key] !== undefined) {
+        node.textContent = c[key];
       }
     });
-    $("#drift-count").textContent = drift;
-    $("#footer-right").textContent =
-      "证据 " + c.evidence + " 条 · 已确认 " + c.verified + " 条";
+    var driftCount = $("#drift-count");
+    if (driftCount) driftCount.textContent = drift;
+    var footer = $("#footer-right");
+    if (footer) {
+      footer.textContent =
+        "证据 " + c.evidence + " 条 · 已确认 " + c.verified + " 条";
+    }
   }
 
   /* ---------------- 渲染：待确认 ---------------- */
@@ -183,129 +343,184 @@
     return flags;
   }
 
+  /** 引文高亮：全程文本节点，引文里有什么字符都只是文本。 */
   function highlightQuote(entry) {
-    var quote = esc(entry.quote);
-    var zh = entry.zh;
-    var at = quote.indexOf(zh);
-    if (at < 0) return quote;
-    return (
-      quote.slice(0, at) +
-      "<mark>" +
-      esc(zh) +
-      "</mark>" +
-      quote.slice(at + zh.length)
-    );
+    var quote = entry.quote == null ? "" : String(entry.quote);
+    var zh = entry.zh == null ? "" : String(entry.zh);
+    var at = zh ? quote.indexOf(zh) : -1;
+    if (at < 0) return [text(quote)];
+    return [
+      text(quote.slice(0, at)),
+      el("mark", null, zh),
+      text(quote.slice(at + zh.length)),
+    ];
   }
 
-  function cardHtml(entry, index, total) {
-    var flags = flagsFor(entry)
-      .map(function (f) {
-        return '<span class="pill pill-flag">' + esc(f) + "</span>";
-      })
-      .join("");
+  function cardNode(entry, index, total) {
+    var score =
+      typeof entry.score === "number"
+        ? entry.score.toFixed(2)
+        : String(entry.score);
     var origin = entry.itemTitle
-      ? esc(entry.itemTitle) + (entry.page ? " p." + entry.page : "")
+      ? String(entry.itemTitle) + (entry.page ? " p." + entry.page : "")
       : "来源未知";
+
     var meta = [
-      '<span class="pill pill-neutral">' +
-        esc(METHOD_LABELS[entry.method] || entry.method) +
-        "</span>",
-      '<span class="pill pill-neutral pill-monosm">score ' +
-        entry.score.toFixed(2) +
-        "</span>",
-      '<span class="pill pill-neutral">' + origin + "</span>",
+      span(
+        "pill pill-neutral",
+        METHOD_LABELS[entry.method] || String(entry.method),
+      ),
+      span("pill pill-neutral pill-monosm", "score " + score),
+      span("pill pill-neutral", origin),
     ];
     if (entry.section) {
-      meta.push(
-        '<span class="pill pill-neutral">' + esc(entry.section) + "</span>",
-      );
+      meta.push(span("pill pill-neutral", String(entry.section)));
     }
     if (entry.seenCount > 1) {
-      meta.push(
-        '<span class="pill pill-neutral">出现 ' +
-          entry.seenCount +
-          " 次</span>",
+      meta.push(span("pill pill-neutral", "出现 " + entry.seenCount + " 次"));
+    }
+
+    var note = null;
+    if (!entry.en) {
+      note = el(
+        "div",
+        { class: "note t-cap" },
+        "英文表述缺失，需补写后才能入库；中英任一为空时确认按钮禁用。",
+      );
+    } else if (entry.score < PROMOTE_SCORE) {
+      note = el(
+        "div",
+        { class: "note t-cap" },
+        "低分候选几乎都败在中文边界，中文框已默认聚焦全选，改一个词就能入库。",
       );
     }
 
-    var known = "";
     var conflicts = knownConflict(entry);
+    var known = null;
     if (conflicts.length) {
       var names = conflicts
         .map(function (pair) {
           return (
-            esc(pair.en) +
+            String(pair.en) +
             "（" +
-            esc(pair.role) +
+            String(pair.role) +
             " · " +
-            esc(pair.status) +
+            String(pair.status) +
             "）"
           );
         })
         .join("、");
-      known =
-        '<div class="known">库中已有：<b>' +
-        names +
-        "</b>。两种写法将在术语库的漂移视图中并列。</div>";
+      known = el("div", { class: "known" }, [
+        text("库中已有："),
+        el("b", null, names),
+        text("。两种写法将在术语库的漂移视图中并列。"),
+      ]);
     }
 
-    var note = "";
-    if (!entry.en) {
-      note =
-        '<div class="note t-cap">英文表述缺失，需补写后才能入库；中英任一为空时确认按钮禁用。</div>';
-    } else if (entry.score < PROMOTE_SCORE) {
-      note =
-        '<div class="note t-cap">低分候选几乎都败在中文边界，中文框已默认聚焦全选，改一个词就能入库。</div>';
-    }
+    var zhInput = el("input", {
+      class: "input input-zh",
+      value: entry.zh == null ? "" : String(entry.zh),
+      "aria-label": "中文表述",
+      "data-field": "zh",
+    });
+    var enInput = el("input", {
+      class: "input input-en",
+      value: entry.en == null ? "" : String(entry.en),
+      placeholder: "填写英文表述",
+      "aria-label": "英文表述",
+      "data-field": "en",
+    });
 
-    var disabled = entry.en ? "" : ' aria-disabled="true"';
-
-    return (
-      '<article class="card' +
-      (index === STATE.current ? " is-current" : "") +
-      '" data-id="' +
-      esc(entry.id) +
-      '">' +
-      '<div class="card-head">' +
-      '<span class="t-label idx">候选 ' +
-      (index + 1) +
-      " / " +
-      total +
-      "</span>" +
-      '<span class="flags">' +
-      flags +
-      "</span>" +
-      "</div>" +
-      '<div class="card-row">' +
-      '<input class="input input-zh" value="' +
-      esc(entry.zh) +
-      '" aria-label="中文表述" data-field="zh" />' +
-      '<span class="arrow" aria-hidden="true">→</span>' +
-      '<input class="input input-en" value="' +
-      esc(entry.en || "") +
-      '" placeholder="填写英文表述" aria-label="英文表述" data-field="en" />' +
-      '<span class="actions">' +
-      '<button class="btn btn-primary btn-compact" type="button" data-act="confirm"' +
-      disabled +
-      ">确认入库</button>" +
-      '<button class="btn btn-quiet btn-compact" type="button" data-act="reject">驳回</button>' +
-      "</span>" +
-      "</div>" +
-      '<div class="meta">' +
-      meta.join("") +
-      "</div>" +
-      '<blockquote class="quote">' +
-      highlightQuote(entry) +
-      "</blockquote>" +
-      note +
-      known +
-      "</article>"
+    return el(
+      "article",
+      {
+        class: "card" + (index === STATE.current ? " is-current" : ""),
+        "data-id": entry.id,
+      },
+      [
+        el("div", { class: "card-head" }, [
+          span("t-label idx", "候选 " + (index + 1) + " / " + total),
+          el(
+            "span",
+            { class: "flags" },
+            flagsFor(entry).map(function (flag) {
+              return span("pill pill-flag", flag);
+            }),
+          ),
+        ]),
+        el("div", { class: "card-row" }, [
+          zhInput,
+          el("span", { class: "arrow", "aria-hidden": "true" }, "→"),
+          enInput,
+          el("span", { class: "actions" }, [
+            el(
+              "button",
+              {
+                class: "btn btn-primary btn-compact",
+                type: "button",
+                "data-act": "confirm",
+                "aria-disabled": entry.en ? "false" : "true",
+              },
+              "确认入库",
+            ),
+            el(
+              "button",
+              {
+                class: "btn btn-quiet btn-compact",
+                type: "button",
+                "data-act": "reject",
+              },
+              "驳回",
+            ),
+          ]),
+        ]),
+        el("div", { class: "meta" }, meta),
+        el("blockquote", { class: "quote" }, highlightQuote(entry)),
+        note,
+        known,
+      ],
     );
   }
 
   function renderPending() {
     var host = $("#pending-list");
     var bulk = $("#pending-bulk");
+    if (!host) {
+      trace("renderPending: #pending-list 缺失");
+      return;
+    }
+    if (bulk) bulk.textContent = "";
+
+    /* 失败优先于一切空态：先把原因摆出来 */
+    if (STATE.loadError) {
+      var failed = [emptyState("术语库读取失败", STATE.loadError)];
+      /* 接口都没拿到时重试没有意义，别给假按钮 */
+      if (api) {
+        failed.push(
+          el(
+            "button",
+            {
+              class: "btn btn-ghost btn-compact",
+              type: "button",
+              "data-act": "retry",
+            },
+            "重试",
+          ),
+        );
+      }
+      fill(host, failed);
+      return;
+    }
+    if (STATE.loading) {
+      fill(host, [
+        emptyState(
+          "正在读取术语库",
+          "首次打开会稍慢，数据来自磁盘上的 terms.json。",
+        ),
+      ]);
+      return;
+    }
+
     var q = STATE.q.trim().toLowerCase();
     var list = STORE.pending.filter(function (entry) {
       if (!q) return true;
@@ -325,41 +540,38 @@
     });
 
     if (!STORE.pending.length) {
-      bulk.textContent = "";
-      host.replaceChildren();
-      setHTML(
-        host,
-        '<div class="empty"><div class="t-title">没有待确认候选</div>' +
-          "<p>术语库已收敛。右键一篇文献选择「提取术语」，引擎会重新跑一轮抽取。</p></div>",
-      );
+      fill(host, [
+        emptyState(
+          "没有待确认候选",
+          "术语库已收敛。右键一篇文献选择「提取术语」，引擎会重新跑一轮抽取。",
+        ),
+      ]);
       return;
     }
     if (!list.length) {
-      bulk.textContent = "共 " + STORE.pending.length + " 条待确认";
-      host.replaceChildren();
-      setHTML(
-        host,
-        '<div class="empty"><div class="t-title">没有匹配的候选</div>' +
-          "<p>共 " +
-          STORE.pending.length +
-          " 条待确认，当前搜索结果为 0 条。</p></div>",
-      );
+      if (bulk) bulk.textContent = "共 " + STORE.pending.length + " 条待确认";
+      fill(host, [
+        emptyState(
+          "没有匹配的候选",
+          "共 " + STORE.pending.length + " 条待确认，当前搜索结果为 0 条。",
+        ),
+      ]);
       return;
     }
 
-    bulk.textContent =
-      "共 " + STORE.pending.length + " 条待确认 · 高分在前 · Enter 逐条过";
-    setHTML(
+    if (bulk) {
+      bulk.textContent =
+        "共 " + STORE.pending.length + " 条待确认 · 高分在前 · Enter 逐条过";
+    }
+    fill(
       host,
-      list
-        .map(function (entry) {
-          return cardHtml(
-            entry,
-            STORE.pending.indexOf(entry),
-            STORE.pending.length,
-          );
-        })
-        .join(""),
+      list.map(function (entry) {
+        return cardNode(
+          entry,
+          STORE.pending.indexOf(entry),
+          STORE.pending.length,
+        );
+      }),
     );
   }
 
@@ -370,14 +582,15 @@
       card.classList.remove("is-current");
     });
     var target = cards[STATE.current];
-    if (target) {
-      target.classList.add("is-current");
+    if (!target) return;
+    target.classList.add("is-current");
+    if (target.scrollIntoView) {
       target.scrollIntoView({ block: "nearest" });
-      var zh = $('[data-field="zh"]', target);
-      if (zh) {
-        zh.focus();
-        zh.select();
-      }
+    }
+    var zh = $('[data-field="zh"]', target);
+    if (zh) {
+      zh.focus();
+      zh.select();
     }
   }
 
@@ -392,108 +605,112 @@
   /* ---------------- 渲染：术语库 ---------------- */
 
   function statusBadge(status) {
-    if (status === "verified") {
-      return '<span class="pill pill-info">verified</span>';
-    }
-    if (status === "suggested") {
-      return '<span class="pill pill-flag">suggested</span>';
-    }
-    return '<span class="pill pill-neutral">attested</span>';
+    if (status === "verified") return span("pill pill-info", "verified");
+    if (status === "suggested") return span("pill pill-flag", "suggested");
+    return span("pill pill-neutral", "attested");
   }
 
-  function evidenceHtml(pair) {
-    var rows = evidenceForPair(pair)
-      .map(function (ev) {
-        var title = ev.itemKey ? itemTitle(ev.itemKey) : "";
-        var loc = ev.page > 0 ? " p." + ev.page : "";
-        var src =
-          ' <span class="ev-src">— ' +
-          esc(title || "来源未知") +
-          loc +
-          (ev.itemKey
-            ? ' <button class="btn btn-quiet btn-compact" type="button" data-jump="' +
-              esc(ev.itemKey) +
-              '">定位条目</button>'
-            : "") +
-          "</span>";
-        return (
-          '<div class="ev-item">「' + esc(ev.quote) + "」" + src + "</div>"
+  function evidenceNodes(pair) {
+    var rows = evidenceForPair(pair).map(function (ev) {
+      var title = ev.itemKey ? itemTitle(ev.itemKey) : "";
+      var loc = ev.page > 0 ? " p." + ev.page : "";
+      var srcChildren = [text("— " + (title || "来源未知") + loc + " ")];
+      if (ev.itemKey) {
+        srcChildren.push(
+          el(
+            "button",
+            {
+              class: "btn btn-quiet btn-compact",
+              type: "button",
+              "data-jump": ev.itemKey,
+            },
+            "定位条目",
+          ),
         );
-      })
-      .join("");
+      }
+      return el("div", { class: "ev-item" }, [
+        text("「" + (ev.quote == null ? "" : String(ev.quote)) + "」"),
+        el("span", { class: "ev-src" }, srcChildren),
+      ]);
+    });
 
-    var drift = "";
+    var drift = null;
     if (
-      driftGroups().some(function (g) {
-        return g.zh === pair.zh;
+      driftGroups().some(function (group) {
+        return group.zh === pair.zh;
       })
     ) {
-      drift =
-        '<div class="known" style="margin-top:12px">⚠ 术语漂移：同一中文概念存在多种英文写法，导出前建议人工择一。</div>';
+      drift = el(
+        "div",
+        { class: "known", style: "margin-top:12px" },
+        "⚠ 术语漂移：同一中文概念存在多种英文写法，导出前建议人工择一。",
+      );
     }
-    return (
-      '<div class="ev-title t-label">证据 ' +
-      evidenceForPair(pair).length +
-      " 条</div>" +
-      rows +
-      drift
-    );
+
+    return [
+      el(
+        "div",
+        { class: "ev-title t-label" },
+        "证据 " + evidenceForPair(pair).length + " 条",
+      ),
+    ]
+      .concat(rows)
+      .concat([drift]);
   }
 
-  function termRows(list) {
-    var driftZh = driftGroups().map(function (g) {
-      return g.zh;
-    });
-    return list
-      .map(function (pair, i) {
-        var key = pair.en + "|" + pair.zh;
-        var open = !!STATE.expanded[key];
-        var evCount = evidenceForPair(pair).length;
-        var last = i === list.length - 1 && !open;
-        var expandBtn = evCount
-          ? '<button class="expand" type="button" data-ev="' +
-            esc(key) +
-            '" aria-expanded="' +
-            open +
-            '">' +
-            evCount +
-            "</button>"
-          : '<span class="t-cap">—</span>';
-        return (
-          '<tr class="row' +
-          (last ? " is-last" : "") +
-          '">' +
-          '<td class="cell-en">' +
-          esc(pair.en) +
-          "</td>" +
-          '<td class="cell-zh">' +
-          esc(pair.zh) +
-          "</td>" +
-          "<td>" +
-          '<span class="t-cap" style="margin-right:6px">' +
-          esc(pair.role) +
-          "</span>" +
-          statusBadge(pair.status) +
-          "</td>" +
-          '<td><span class="t-cap num">' +
-          esc(pair.source) +
-          "</span></td>" +
-          "<td>" +
-          expandBtn +
-          "</td>" +
-          "</tr>" +
-          (open
-            ? '<tr><td class="evidence" colspan="5">' +
-              evidenceHtml(pair) +
-              "</td></tr>"
-            : "") +
-          (driftZh.indexOf(pair.zh) >= 0 && !open ? "" : "")
+  function termRowNodes(list) {
+    var out = [];
+    list.forEach(function (pair, i) {
+      var key = pair.en + "|" + pair.zh;
+      var open = !!STATE.expanded[key];
+      var evCount = evidenceForPair(pair).length;
+      var last = i === list.length - 1 && !open;
+      var expandCell = evCount
+        ? el(
+            "button",
+            {
+              class: "expand",
+              type: "button",
+              "data-ev": key,
+              "aria-expanded": open ? "true" : "false",
+            },
+            String(evCount),
+          )
+        : span("t-cap", "—");
+
+      var role = span("t-cap", String(pair.role));
+      role.setAttribute("style", "margin-right:6px");
+
+      out.push(
+        el("tr", { class: "row" + (last ? " is-last" : "") }, [
+          el("td", { class: "cell-en" }, pair.en),
+          el("td", { class: "cell-zh" }, pair.zh),
+          el("td", null, [role, statusBadge(pair.status)]),
+          el("td", null, [span("t-cap num", String(pair.source))]),
+          el("td", null, [expandCell]),
+        ]),
+      );
+
+      if (open) {
+        out.push(
+          el("tr", null, [
+            el("td", { class: "evidence", colspan: "5" }, evidenceNodes(pair)),
+          ]),
         );
-      })
-      .join("");
+      }
+    });
+    return out;
   }
 
   function renderTerms() {
+    var body = $("#terms-body");
+    var empty = $("#terms-empty");
+    var count = $("#terms-count");
+    if (!body || !empty) {
+      trace("renderTerms: 表格容器缺失");
+      return;
+    }
+
     var q = STATE.q.trim().toLowerCase();
     var list = STORE.pairs.filter(function (pair) {
       if (STATE.docFilter) {
@@ -510,31 +727,30 @@
       );
     });
 
-    var body = $("#terms-body");
-    var empty = $("#terms-empty");
-
     if (!STORE.pairs.length) {
       body.replaceChildren();
-      $("#terms-count").textContent = "";
-      setHTML(
-        empty,
-        '<div class="empty"><div class="t-title">术语库是空的</div>' +
-          "<p>右键一篇文献选择「提取术语」，或到「待确认」确认候选，术语对会出现在这里。</p></div>",
-      );
+      if (count) count.textContent = "";
+      fill(empty, [
+        emptyState(
+          "术语库是空的",
+          "右键一篇文献选择「提取术语」，或到「待确认」确认候选，术语对会出现在这里。",
+        ),
+      ]);
       return;
     }
     if (!list.length) {
       body.replaceChildren();
-      $("#terms-count").textContent = "共 " + STORE.pairs.length + " 条术语对";
-      setHTML(
-        empty,
-        '<div class="empty"><div class="t-title">没有匹配的术语</div>' +
-          "<p>共 " +
-          STORE.pairs.length +
-          " 条术语对，当前筛选结果为 0 条" +
-          (STATE.docFilter ? "（来自文献过滤）" : "") +
-          "。</p></div>",
-      );
+      if (count) count.textContent = "共 " + STORE.pairs.length + " 条术语对";
+      fill(empty, [
+        emptyState(
+          "没有匹配的术语",
+          "共 " +
+            STORE.pairs.length +
+            " 条术语对，当前筛选结果为 0 条" +
+            (STATE.docFilter ? "（来自文献过滤）" : "") +
+            "。",
+        ),
+      ]);
       return;
     }
     empty.replaceChildren();
@@ -549,122 +765,128 @@
         }
         groups[pair.zh].push(pair);
       });
-      setTableRows(
-        body,
-        order
-          .map(function (zh) {
-            var items = groups[zh];
-            var warn =
-              items.length > 1
-                ? '<span class="pill pill-flag">' +
-                  items.length +
-                  " 种写法</span>"
-                : '<span class="pill pill-neutral">单一写法</span>';
-            var head =
-              '<tr><td class="group-head" colspan="5">' +
-              '<span class="zh">' +
-              esc(zh) +
-              "</span>" +
-              '<span class="sub" style="margin-left:8px">' +
-              items.length +
-              " 个英文术语对</span>" +
-              '<span style="float:right">' +
-              warn +
-              "</span>" +
-              "</td></tr>";
-            return head + termRows(items);
-          })
-          .join(""),
-      );
-      $("#terms-count").textContent =
-        "共 " +
-        STORE.pairs.length +
-        " 条 · 归并为 " +
-        order.length +
-        " 个中文概念 · 当前显示 " +
-        list.length +
-        " 条";
+      var nodes = [];
+      order.forEach(function (zh) {
+        var items = groups[zh];
+        var warn =
+          items.length > 1
+            ? span("pill pill-flag", items.length + " 种写法")
+            : span("pill pill-neutral", "单一写法");
+        nodes.push(
+          el("tr", null, [
+            el("td", { class: "group-head", colspan: "5" }, [
+              span("zh", zh),
+              span("sub", items.length + " 个英文术语对").setAttribute(
+                "style",
+                "margin-left:8px",
+              ),
+              el("span", { style: "float:right" }, [warn]),
+            ]),
+          ]),
+        );
+        nodes.push.apply(nodes, termRowNodes(items));
+      });
+      fill(body, nodes);
+      if (count) {
+        count.textContent =
+          "共 " +
+          STORE.pairs.length +
+          " 条 · 归并为 " +
+          order.length +
+          " 个中文概念 · 当前显示 " +
+          list.length +
+          " 条";
+      }
     } else {
-      setTableRows(body, termRows(list));
-      $("#terms-count").textContent =
-        "共 " + STORE.pairs.length + " 条 · 显示 " + list.length + " 条";
+      fill(body, termRowNodes(list));
+      if (count) {
+        count.textContent =
+          "共 " + STORE.pairs.length + " 条 · 显示 " + list.length + " 条";
+      }
     }
   }
 
   /* ---------------- 渲染：文献 ---------------- */
 
+  function docNode(rec) {
+    var pending = pendingCountForItem(rec.itemKey);
+    return el(
+      "button",
+      { class: "doc", type: "button", "data-doc": rec.itemKey },
+      [
+        el("span", { class: "doc-main" }, [
+          el("span", { class: "doc-title" }, rec.title),
+          el("span", { class: "doc-meta" }, [
+            text("PDF · "),
+            span("num", String(rec.pages)),
+            text(" 页 · 摄取于 "),
+            span("num", String(rec.extractedAt).slice(0, 10)),
+          ]),
+        ]),
+        el("span", { class: "doc-num" }, [
+          el("span", { class: "metric" }, [
+            span("v", String(rec.pairs)),
+            el("br"),
+            span("k", "术语对"),
+          ]),
+          el("span", { class: "metric" }, [
+            span("v", String(pending)),
+            el("br"),
+            span("k", "待确认"),
+          ]),
+        ]),
+        el("span", { class: "chev", "aria-hidden": "true" }, "→"),
+      ],
+    );
+  }
+
   function renderDocs() {
     var host = $("#docs-list");
     var empty = $("#docs-empty");
+    if (!host || !empty) {
+      trace("renderDocs: 容器缺失");
+      return;
+    }
     var q = STATE.q.trim().toLowerCase();
     var list = Object.keys(STORE.items)
       .map(function (key) {
         return STORE.items[key];
       })
       .filter(function (rec) {
-        return !q || rec.title.toLowerCase().indexOf(q) >= 0;
+        return !q || String(rec.title).toLowerCase().indexOf(q) >= 0;
       })
       .sort(function (a, b) {
-        return b.extractedAt.localeCompare(a.extractedAt);
+        return String(b.extractedAt).localeCompare(String(a.extractedAt));
       });
 
     if (!Object.keys(STORE.items).length) {
       host.replaceChildren();
-      setHTML(
-        empty,
-        '<div class="empty"><div class="t-title">还没有摄取过文献</div>' +
-          "<p>右键一篇文献选择「提取术语」，摄取完成后文献会出现在这里。</p></div>",
-      );
+      fill(empty, [
+        emptyState(
+          "还没有摄取过文献",
+          "右键一篇文献选择「提取术语」，摄取完成后文献会出现在这里。",
+        ),
+      ]);
       return;
     }
     if (!list.length) {
       host.replaceChildren();
-      setHTML(
-        empty,
-        '<div class="empty"><div class="t-title">没有匹配的文献</div>' +
-          "<p>共 " +
-          Object.keys(STORE.items).length +
-          " 篇已摄取文献，当前搜索结果为 0 篇。</p></div>",
-      );
+      fill(empty, [
+        emptyState(
+          "没有匹配的文献",
+          "共 " +
+            Object.keys(STORE.items).length +
+            " 篇已摄取文献，当前搜索结果为 0 篇。",
+        ),
+      ]);
       return;
     }
     empty.replaceChildren();
-    setHTML(
-      host,
-      list
-        .map(function (rec) {
-          var pending = pendingCountForItem(rec.itemKey);
-          return (
-            '<button class="doc" type="button" data-doc="' +
-            esc(rec.itemKey) +
-            '">' +
-            '<span class="doc-main">' +
-            '<span class="doc-title">' +
-            esc(rec.title) +
-            "</span>" +
-            '<span class="doc-meta">PDF · <span class="num">' +
-            rec.pages +
-            '</span> 页 · 摄取于 <span class="num">' +
-            esc(rec.extractedAt.slice(0, 10)) +
-            "</span></span>" +
-            "</span>" +
-            '<span class="doc-num">' +
-            '<span class="metric"><span class="v">' +
-            rec.pairs +
-            '</span><br /><span class="k">术语对</span></span>' +
-            '<span class="metric"><span class="v">' +
-            pending +
-            '</span><br /><span class="k">待确认</span></span>' +
-            "</span>" +
-            '<span class="chev" aria-hidden="true">→</span>' +
-            "</button>"
-          );
-        })
-        .join(""),
-    );
+    fill(host, list.map(docNode));
   }
 
   function renderAll() {
+    renderErrorBanner();
     renderCounts();
     renderPending();
     renderTerms();
@@ -674,33 +896,68 @@
   /* ---------------- 数据访问 ---------------- */
 
   function refresh() {
+    if (!api) {
+      STATE.loading = false;
+      STATE.errorKind = "api";
+      STATE.loadError = "插件接口不可用：窗口没能拿到 addon.api.manager。";
+      trace(STATE.loadError);
+      renderAll();
+      return Promise.resolve();
+    }
+    STATE.loading = true;
+    STATE.loadError = null;
+    STATE.errorKind = null;
+    renderAll();
     return api
       .snapshot()
       .then(function (snapshot) {
         STORE = snapshot;
-        renderAll();
+        STATE.loading = false;
+        trace(
+          "snapshot ok: pairs=" +
+            (snapshot.pairs || []).length +
+            " pending=" +
+            (snapshot.pending || []).length,
+        );
         if (STATE.docFilter && !STORE.items[STATE.docFilter]) {
           STATE.docFilter = null;
         }
+        renderAll();
       })
       .catch(function (error) {
-        toast("读取术语库失败：" + shortError(error));
+        STATE.loading = false;
+        STATE.errorKind = "read";
+        STATE.loadError =
+          "读取术语库失败：" +
+          shortError(error) +
+          "（" +
+          errorName(error) +
+          "）";
+        trace("snapshot failed: " + shortError(error));
+        renderAll();
       });
-  }
-
-  function shortError(error) {
-    var message = error && error.message ? error.message : String(error);
-    return message.length > 80 ? message.slice(0, 80) + "…" : message;
   }
 
   /* ---------------- 导出 ---------------- */
 
   function csvCell(value) {
-    var text = String(value == null ? "" : value);
-    if (/[",\n\r]/.test(text)) {
-      return '"' + text.replace(/"/g, '""') + '"';
+    var cell = String(value == null ? "" : value);
+    if (/[",\n\r]/.test(cell)) {
+      return '"' + cell.replace(/"/g, '""') + '"';
     }
-    return text;
+    return cell;
+  }
+
+  function copyToClipboard(value) {
+    var utilities =
+      ZoteroRef && ZoteroRef.Utilities ? ZoteroRef.Utilities : null;
+    var internal = utilities && utilities.Internal ? utilities.Internal : null;
+    if (internal && internal.copyTextToClipboard) {
+      internal.copyTextToClipboard(value);
+      return true;
+    }
+    trace("剪贴板接口不可用");
+    return false;
   }
 
   function exportPairs() {
@@ -710,11 +967,10 @@
         [pair.en, pair.zh, pair.role, pair.status].map(csvCell).join(","),
       );
     });
-    if (!ZoteroRef || !ZoteroRef.Utilities || !ZoteroRef.Utilities.Internal) {
+    if (!copyToClipboard(rows.join("\n"))) {
       toast("导出失败：无法访问剪贴板接口");
       return;
     }
-    ZoteroRef.Utilities.Internal.copyTextToClipboard(rows.join("\n"));
     toast(
       "已复制 " +
         STORE.pairs.length +
@@ -725,29 +981,30 @@
   /* ---------------- toast ---------------- */
 
   var toastTimer = null;
+
   function toast(message, actionLabel, action) {
-    var el = $("#toast");
+    var node = $("#toast");
+    if (!node) return;
     clearTimeout(toastTimer);
-    setHTML(
-      el,
-      "<span>" +
-        esc(message) +
-        "</span>" +
-        (actionLabel
-          ? '<button type="button" id="toast-act">' +
-            esc(actionLabel) +
-            "</button>"
-          : ""),
-    );
-    el.classList.add("on");
+    var children = [el("span", null, message)];
+    if (actionLabel) {
+      children.push(
+        el("button", { type: "button", id: "toast-act" }, actionLabel),
+      );
+    }
+    fill(node, children);
+    node.classList.add("on");
     if (actionLabel && action) {
-      $("#toast-act").addEventListener("click", function () {
-        action();
-        el.classList.remove("on");
-      });
+      var act = $("#toast-act");
+      if (act) {
+        act.addEventListener("click", function () {
+          action();
+          node.classList.remove("on");
+        });
+      }
     }
     toastTimer = setTimeout(function () {
-      el.classList.remove("on");
+      node.classList.remove("on");
     }, 3600);
   }
 
@@ -764,10 +1021,17 @@
     $$(".view").forEach(function (section) {
       section.hidden = section.getAttribute("id") !== "view-" + view;
     });
-    $("#hints").style.display = view === "pending" ? "" : "none";
+    var hints = $("#hints");
+    if (hints) {
+      hints.style.display = view === "pending" ? "" : "none";
+    }
   }
 
   /* ---------------- 事件 ---------------- */
+
+  function activeCard() {
+    return $$("#pending-list .card")[STATE.current];
+  }
 
   function onConfirm(card) {
     var id = card.getAttribute("data-id");
@@ -775,8 +1039,10 @@
       return item.id === id;
     });
     if (!entry) return;
-    var zh = $('[data-field="zh"]', card).value.trim();
-    var en = $('[data-field="en"]', card).value.trim();
+    var zhField = $('[data-field="zh"]', card);
+    var enField = $('[data-field="en"]', card);
+    var zh = zhField ? zhField.value.trim() : "";
+    var en = enField ? enField.value.trim() : "";
     if (!zh || !en) return;
     var changed = zh !== entry.zh || en !== (entry.en || "");
     api
@@ -831,191 +1097,395 @@
       });
   }
 
-  document.addEventListener("click", function (event) {
-    var tab = event.target.closest("[data-view]");
-    if (tab) {
-      setView(tab.getAttribute("data-view"));
+  function onBulkReject() {
+    var low = STORE.pending.filter(function (entry) {
+      return entry.score < BULK_REJECT_BELOW;
+    });
+    if (!low.length) {
+      toast("没有低于 " + BULK_REJECT_BELOW + " 分的候选");
       return;
     }
-
-    var act = event.target.closest("[data-act]");
-    if (act) {
-      var card = act.closest(".card");
-      var id = card.getAttribute("data-id");
-      var index = $$("#pending-list .card").indexOf(card);
-      if (act.getAttribute("data-act") === "confirm") {
-        onConfirm(card);
-      } else {
-        onReject(id, index);
-      }
-      return;
-    }
-
-    var ev = event.target.closest("[data-ev]");
-    if (ev) {
-      var key = ev.getAttribute("data-ev");
-      STATE.expanded[key] = !STATE.expanded[key];
-      renderTerms();
-      return;
-    }
-
-    var jump = event.target.closest("[data-jump]");
-    if (jump) {
-      var itemKey = jump.getAttribute("data-jump");
-      if (api.selectItem(itemKey)) {
-        toast("已在文献面板定位该条目");
-      } else {
-        toast("无法定位条目：文献面板不可用");
-      }
-      return;
-    }
-
-    var doc = event.target.closest("[data-doc]");
-    if (doc) {
-      STATE.docFilter = doc.getAttribute("data-doc");
-      setView("terms");
-      renderTerms();
-      toast("已按《" + itemTitle(STATE.docFilter) + "》过滤术语库");
-      return;
-    }
-
-    if (event.target.closest("#export")) {
-      exportPairs();
-      return;
-    }
-
-    if (event.target.closest("#reject-low")) {
-      var low = STORE.pending.filter(function (entry) {
-        return entry.score < BULK_REJECT_BELOW;
+    api
+      .rejectMany(
+        low.map(function (entry) {
+          return entry.id;
+        }),
+      )
+      .then(function (count) {
+        toast("已批量驳回 " + count + " 条低分候选");
+        STATE.current = 0;
+        return afterAction(0);
+      })
+      .catch(function (error) {
+        toast("批量驳回失败：" + shortError(error));
       });
-      if (!low.length) {
-        toast("没有低于 " + BULK_REJECT_BELOW + " 分的候选");
+  }
+
+  function onDiagnostics() {
+    var report = diagnosticsText();
+    try {
+      console.log(report);
+    } catch {
+      /* 忽略 */
+    }
+    trace("diagnostics copied; styleSheets=" + document.styleSheets.length);
+    if (copyToClipboard(report)) {
+      toast("诊断信息已复制到剪贴板");
+    } else {
+      toast("诊断信息已写入 Zotero 调试日志（剪贴板不可用）");
+    }
+  }
+
+  function bindEvents() {
+    document.addEventListener("click", function (event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+
+      var tab = target.closest("[data-view]");
+      if (tab) {
+        setView(tab.getAttribute("data-view"));
         return;
       }
-      api
-        .rejectMany(
-          low.map(function (entry) {
-            return entry.id;
-          }),
-        )
-        .then(function (count) {
-          toast("已批量驳回 " + count + " 条低分候选");
-          STATE.current = 0;
-          return afterAction(0);
-        })
-        .catch(function (error) {
-          toast("批量驳回失败：" + shortError(error));
-        });
-      return;
-    }
 
-    if (event.target.closest("#drift-toggle")) {
-      STATE.drift = !STATE.drift;
-      var btn = $("#drift-toggle");
-      btn.setAttribute("aria-pressed", STATE.drift ? "true" : "false");
-      btn.classList.toggle("btn-ghost", !STATE.drift);
-      btn.classList.toggle("btn-primary", STATE.drift);
-      renderTerms();
-      return;
-    }
+      var act = target.closest("[data-act]");
+      if (act) {
+        var actName = act.getAttribute("data-act");
+        if (actName === "retry") {
+          refresh();
+          return;
+        }
+        var card = act.closest(".card");
+        if (!card) return;
+        var index = $$("#pending-list .card").indexOf(card);
+        if (actName === "confirm") {
+          onConfirm(card);
+        } else {
+          onReject(card.getAttribute("data-id"), index);
+        }
+        return;
+      }
 
-    if (event.target.closest("#theme")) {
-      var html = document.documentElement;
-      html.setAttribute(
-        "data-theme",
-        html.getAttribute("data-theme") === "dark" ? "light" : "dark",
-      );
-      return;
-    }
-  });
+      var evBtn = target.closest("[data-ev]");
+      if (evBtn) {
+        var key = evBtn.getAttribute("data-ev");
+        STATE.expanded[key] = !STATE.expanded[key];
+        renderTerms();
+        return;
+      }
 
-  document.addEventListener("input", function (event) {
-    if (event.target.id === "q") {
-      STATE.q = event.target.value;
-      renderPending();
-      renderTerms();
-      renderDocs();
-      return;
-    }
-    /* 中英任一为空 → 确认按钮禁用 */
-    var field = event.target.closest("[data-field]");
-    if (field) {
+      var jump = target.closest("[data-jump]");
+      if (jump) {
+        var itemKey = jump.getAttribute("data-jump");
+        if (api && api.selectItem(itemKey)) {
+          toast("已在文献面板定位该条目");
+        } else {
+          toast("无法定位条目：文献面板不可用");
+        }
+        return;
+      }
+
+      var doc = target.closest("[data-doc]");
+      if (doc) {
+        STATE.docFilter = doc.getAttribute("data-doc");
+        setView("terms");
+        renderTerms();
+        toast("已按《" + itemTitle(STATE.docFilter) + "》过滤术语库");
+        return;
+      }
+
+      if (target.closest("#export")) {
+        exportPairs();
+        return;
+      }
+
+      if (target.closest("#reject-low")) {
+        onBulkReject();
+        return;
+      }
+
+      if (target.closest("#drift-toggle")) {
+        STATE.drift = !STATE.drift;
+        var btn = $("#drift-toggle");
+        if (btn) {
+          btn.setAttribute("aria-pressed", STATE.drift ? "true" : "false");
+          btn.classList.toggle("btn-ghost", !STATE.drift);
+          btn.classList.toggle("btn-primary", STATE.drift);
+        }
+        renderTerms();
+        return;
+      }
+
+      if (target.closest("#theme")) {
+        var root = document.documentElement;
+        root.setAttribute(
+          "data-theme",
+          root.getAttribute("data-theme") === "dark" ? "light" : "dark",
+        );
+        return;
+      }
+
+      if (target.closest("#diagnostics")) {
+        onDiagnostics();
+      }
+    });
+
+    document.addEventListener("input", function (event) {
+      var target = event.target;
+      if (!target) return;
+      if (target.id === "q") {
+        STATE.q = target.value;
+        renderPending();
+        renderTerms();
+        renderDocs();
+        return;
+      }
+      /* 中英任一为空 → 确认按钮禁用 */
+      var field = target.closest ? target.closest("[data-field]") : null;
+      if (!field) return;
       var card = field.closest(".card");
-      var zh = $('[data-field="zh"]', card).value.trim();
-      var en = $('[data-field="en"]', card).value.trim();
+      if (!card) return;
+      var zhField = $('[data-field="zh"]', card);
+      var enField = $('[data-field="en"]', card);
+      var zh = zhField ? zhField.value.trim() : "";
+      var en = enField ? enField.value.trim() : "";
       var btn = $('[data-act="confirm"]', card);
       if (btn) {
-        if (zh && en) {
-          btn.removeAttribute("aria-disabled");
-        } else {
-          btn.setAttribute("aria-disabled", "true");
+        btn.setAttribute("aria-disabled", zh && en ? "false" : "true");
+      }
+    });
+
+    document.addEventListener("keydown", function (event) {
+      var search = $("#q");
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        if (!search) return;
+        event.preventDefault();
+        search.focus();
+        search.select();
+        return;
+      }
+      if (
+        event.key === "Escape" &&
+        search &&
+        document.activeElement === search
+      ) {
+        STATE.q = "";
+        search.value = "";
+        renderPending();
+        renderTerms();
+        renderDocs();
+        search.blur();
+        return;
+      }
+      if (STATE.view !== "pending") return;
+      var active = document.activeElement;
+      var typing = active && /^(INPUT|TEXTAREA)$/.test(active.tagName);
+      if (typing && event.key !== "Enter") return;
+
+      var key = event.key.toLowerCase();
+      if (key === "r") {
+        event.preventDefault();
+        var cardR = activeCard();
+        if (cardR) onReject(cardR.getAttribute("data-id"), STATE.current);
+      } else if (key === "s") {
+        event.preventDefault();
+        setCurrent(STATE.current + 1);
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        var cardE = activeCard();
+        if (!cardE) return;
+        var btn = $('[data-act="confirm"]', cardE);
+        if (btn && btn.getAttribute("aria-disabled") !== "true") {
+          onConfirm(cardE);
         }
       }
-    }
-  });
-
-  document.addEventListener("keydown", function (event) {
-    var meta = event.metaKey || event.ctrlKey;
-    if (meta && event.key.toLowerCase() === "k") {
-      event.preventDefault();
-      $("#q").focus();
-      $("#q").select();
-      return;
-    }
-    if (event.key === "Escape" && document.activeElement === $("#q")) {
-      STATE.q = "";
-      $("#q").value = "";
-      renderPending();
-      renderTerms();
-      renderDocs();
-      $("#q").blur();
-      return;
-    }
-    if (STATE.view !== "pending") return;
-    var typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-    if (typing && event.key !== "Enter") return;
-
-    var key = event.key.toLowerCase();
-    if (key === "r") {
-      event.preventDefault();
-      var cardR = $$("#pending-list .card")[STATE.current];
-      if (cardR) {
-        onReject(cardR.getAttribute("data-id"), STATE.current);
-      }
-    } else if (key === "s") {
-      event.preventDefault();
-      setCurrent(STATE.current + 1);
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      var cardE = $$("#pending-list .card")[STATE.current];
-      if (!cardE) return;
-      var btn = $('[data-act="confirm"]', cardE);
-      if (btn && btn.getAttribute("aria-disabled") !== "true") {
-        onConfirm(cardE);
-      }
-    }
-  });
+    });
+  }
 
   /* ---------------- 启动 ---------------- */
 
-  document.documentElement.setAttribute(
-    "data-theme",
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light",
-  );
+  /** 未捕获错误也要可见，而不是"控件莫名不见了"。 */
+  function installErrorSurface() {
+    window.addEventListener("error", function (event) {
+      STATE.errorKind = "markup";
+      STATE.loadError =
+        "窗口脚本报错：" +
+        (event.message || "未知错误") +
+        "（" +
+        (event.filename || "?") +
+        ":" +
+        event.lineno +
+        "）";
+      trace("window error: " + STATE.loadError);
+      try {
+        renderErrorBanner();
+      } catch {
+        /* 兜底渲染失败时不再递归 */
+      }
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      trace("unhandled rejection: " + shortError(event.reason));
+    });
+  }
 
-  /* 主窗口在提取完成后调用此函数刷新本窗口 */
-  window.TermGroundManagerRefresh = function () {
-    if (api) {
-      refresh();
+  /**
+   * 样式表原本只靠 XHTML 里的 <?xml-stylesheet?> 声明式加载。一旦它取不到，
+   * 页面就是无样式文档：input / button 会渲染成没有边框和底色的空板，看上
+   * 去正是"没有输入框、没有按钮"。这里在脚本里再显式挂一次 chrome:// 样式表
+   * 作为冗余，并把加载前后的 styleSheets 数量记进诊断。
+   */
+  function ensureStylesheet() {
+    var before = document.styleSheets.length;
+    /* <link> 只能进 <head>：挂到 <html> 上会直接抛 HierarchyRequestError */
+    var head = document.head || document.getElementsByTagName("head")[0];
+    if (!head) {
+      trace("stylesheet: 找不到 <head>，跳过显式挂载");
+      return;
     }
-  };
+    if (head.querySelector("link#tg-manager-css")) {
+      trace("stylesheet: 已挂载过，跳过");
+      return;
+    }
+    try {
+      var link = el("link", {
+        id: "tg-manager-css",
+        rel: "stylesheet",
+        type: "text/css",
+        href: STYLESHEET_HREF,
+      });
+      head.appendChild(link);
+      trace(
+        "stylesheet: appended " +
+          STYLESHEET_HREF +
+          " (styleSheets " +
+          before +
+          " -> " +
+          document.styleSheets.length +
+          ")",
+      );
+    } catch (error) {
+      trace("stylesheet append failed: " + shortError(error));
+    }
+  }
 
-  if (ensureApi()) {
+  /** 顶部搜索框与导出按钮由 XHTML 提供；图标必须自己补上（见 manager.xhtml）。 */
+  function hydrateStaticIcons() {
+    var theme = $("#theme");
+    if (!theme || theme.querySelector("svg")) return;
+    try {
+      var circle = svgPart("circle", { cx: "8", cy: "8", r: "3.2" });
+      var path = svgPart("path", {
+        d:
+          "M8 1v2M8 13v2M1 8h2M13 8h2M3.2 3.2l1.4 1.4M11.4 11.4l1.4 1.4" +
+          "M12.8 3.2l-1.4 1.4M4.6 11.4l-1.4 1.4",
+        "stroke-linecap": "round",
+      });
+      theme.appendChild(svgIcon(15, "0 0 16 16", [circle, path]));
+      trace("static icons hydrated");
+    } catch (error) {
+      trace("static icons failed: " + shortError(error));
+    }
+  }
+
+  /**
+   * 诊断日志的只读读取口：自动化测试与外部脚本用它确认启动各步是否走到，
+   * 不参与界面逻辑（生产环境下没人会去读它）。
+   */
+  function exposeDiagnostics() {
+    try {
+      Object.defineProperty(window, "__TermGroundManagerDiagnostics", {
+        value: function () {
+          return DIAG.slice();
+        },
+        configurable: true,
+      });
+    } catch {
+      /* 定义失败不影响界面 */
+    }
+  }
+
+  function boot() {
+    installErrorSurface();
+    exposeDiagnostics();
+
+    document.documentElement.setAttribute(
+      "data-theme",
+      window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light",
+    );
+
+    bindEvents();
+    ensureStylesheet();
+    hydrateStaticIcons();
+    hydrateStaticMarkupLosses();
+
+    trace(
+      "boot: contentType=" +
+        document.contentType +
+        " api=" +
+        !!api +
+        " zotero=" +
+        !!ZoteroRef +
+        " services=" +
+        !!ServicesRef +
+        " styleSheets=" +
+        document.styleSheets.length,
+    );
+
+    /* 主窗口在提取完成后调用此函数刷新本窗口 */
+    window.TermGroundManagerRefresh = function () {
+      if (api) refresh();
+    };
+
+    if (!api) {
+      STATE.errorKind = "api";
+      STATE.loadError =
+        "插件接口不可用：窗口没能拿到 addon.api.manager（Zotero=" +
+        !!ZoteroRef +
+        "、Services=" +
+        !!ServicesRef +
+        "）。请从 Zotero 工具菜单重新打开本窗口。";
+      renderAll();
+      return;
+    }
+
     setView("pending");
     refresh().then(function () {
       setCurrent(0);
+      trace("boot complete");
     });
+  }
+
+  /**
+   * XHTML 是严格 XML：静态标记里出现未声明实体等问题会让整段标记失效。
+   * 这里补回唯一一处需要图形的地方（主题图标），其余维持纯文本。
+   */
+  function hydrateStaticMarkupLosses() {
+    var hints = $("#hints");
+    if (hints && !hints.childNodes.length) {
+      fill(hints, [
+        el("span", { class: "h" }, [
+          span("kbd", "Enter"),
+          text(" 确认并下一条"),
+        ]),
+        el("span", { class: "h" }, [span("kbd", "R"), text(" 驳回")]),
+        el("span", { class: "h" }, [span("kbd", "S"), text(" 跳过")]),
+      ]);
+      trace("static hints rebuilt");
+    }
+  }
+
+  try {
+    boot();
+  } catch (error) {
+    trace("boot threw: " + shortError(error));
+    try {
+      STATE.errorKind = "markup";
+      STATE.loadError = "窗口初始化失败：" + shortError(error);
+      renderAll();
+    } catch {
+      /* 极端情况：连兜底都渲染不出来，只能靠调试日志 */
+    }
   }
 })();

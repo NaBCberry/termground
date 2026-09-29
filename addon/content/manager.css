@@ -967,6 +967,46 @@ td.evidence {
   font-weight: 500;
 }
 
+.footer .diag-btn {
+  flex: none;
+}
+
+/* ---------- 错误横幅 ----------
+   脚本失败必须看得见：界面「少东西」时先读这里，而不是靠猜。 */
+.err-banner {
+  background: var(--red-wash);
+  box-shadow: inset 0 0 0 1px var(--red-ring);
+  padding: var(--s-12) var(--s-16);
+  margin: var(--s-16) auto 0;
+  border-radius: var(--r-8);
+  max-width: calc(var(--maxw) - var(--s-32) * 2);
+}
+
+.err-banner[hidden] {
+  display: none;
+}
+
+.err-banner .err-head {
+  color: var(--red);
+  font-weight: 600;
+  margin-bottom: var(--s-4);
+}
+
+.err-banner .err-body {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.err-banner .err-hint {
+  margin-top: var(--s-8);
+  font-size: 12px;
+  color: var(--fg-3);
+}
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed;
