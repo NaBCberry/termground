@@ -1288,22 +1288,174 @@
    * 本窗口 chrome:// URL 反推出来的插件目录（window.arguments 拿不到时的
    * 兜底）。不弹框问用户——出故障时人只想看到结果，不想先回答一个问题。
    */
+  /**
+   * 写文件的多策略兜底。
+   *
+   * 实测窗口里 Zotero.Utilities.Internal.saveFile 不存在，只剩 IOUtils 一条
+   * 路；而 Services 又可能取到但缺 IOUtils。所以这里把能想到的官方写文件
+   * 方式全列上，逐条试，并把每次失败都写进诊断——"没有可用的写文件接口"
+   * 这种结论必须附带每条策略的失败原因，否则没法排查。
+   */
+  function writeAnyFile(path, textValue, append) {
+    var attempts = [];
+
+    /* 1. Services.IOUtils.writeUTF8 —— Gecko 推荐的异步文件 API */
+    try {
+      var io = ServicesRef && ServicesRef.IOUtils;
+      if (io && io.writeUTF8) {
+        io.writeUTF8(path, textValue, append ? { mode: "append" } : undefined);
+        return "IOUtils.writeUTF8";
+      }
+      attempts.push("IOUtils 不可用");
+    } catch (error) {
+      attempts.push("IOUtils.writeUTF8: " + shortError(error));
+    }
+
+    /* 2. Zotero 自己的保存接口（不同版本可能没有） */
+    try {
+      var internal =
+        ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
+          ? ZoteroRef.Utilities.Internal
+          : null;
+      if (internal && internal.saveFile) {
+        internal.saveFile(textValue, path);
+        return "Zotero.Utilities.Internal.saveFile";
+      }
+      attempts.push("saveFile 不可用");
+    } catch (error) {
+      attempts.push("saveFile: " + shortError(error));
+    }
+
+    /* 3. nsIFile + NetUtil 的文件流，最原始也最不依赖上层封装 */
+    try {
+      var NetUtil = resolveGlobal("NetUtil");
+      var file = newFile(path);
+      if (NetUtil && NetUtil.writeFile && file) {
+        NetUtil.writeFile(file, textValue);
+        return "NetUtil.writeFile";
+      }
+      attempts.push("NetUtil 不可用");
+    } catch (error) {
+      attempts.push("NetUtil.writeFile: " + shortError(error));
+    }
+
+    /* 4. 自己拼 nsIFileOutputStream */
+    try {
+      var stream = newFileOutputStream(path);
+      if (stream) {
+        var bytes = new TextEncoder().encode(textValue);
+        stream.write(bytes, bytes.length);
+        stream.close();
+        return "nsIFileOutputStream";
+      }
+      attempts.push("FileOutputStream 不可用");
+    } catch (error) {
+      attempts.push("nsIFileOutputStream: " + shortError(error));
+    }
+
+    /* 5. 借主窗口的 Zotero 写：主窗口作用域一定有可用的文件 API */
+    try {
+      var mainWin = mainChromeWindow();
+      var mainIO =
+        mainWin && mainWin.Services && mainWin.Services.IOUtils
+          ? mainWin.Services.IOUtils
+          : null;
+      if (mainIO && mainIO.writeUTF8) {
+        mainIO.writeUTF8(
+          path,
+          textValue,
+          append ? { mode: "append" } : undefined,
+        );
+        return "mainWindow.Services.IOUtils.writeUTF8";
+      }
+      attempts.push("主窗口 Services.IOUtils 不可用");
+    } catch (error) {
+      attempts.push("主窗口写入: " + shortError(error));
+    }
+
+    /* 6. 主窗口作用域里的 IOUtils（PathUtils 只用来确认路径可用） */
+    try {
+      var mainWin2 = mainChromeWindow();
+      var PathUtils = mainWin2 && mainWin2.PathUtils;
+      var IOUtils2 = mainWin2 && mainWin2.IOUtils;
+      if (PathUtils && PathUtils.isAbsolute && !PathUtils.isAbsolute(path)) {
+        attempts.push("主窗口 PathUtils: 路径不是绝对路径");
+      } else if (IOUtils2 && IOUtils2.writeUTF8) {
+        IOUtils2.writeUTF8(path, textValue);
+        return "mainWindow.IOUtils.writeUTF8";
+      } else {
+        attempts.push("主窗口 IOUtils 不可用");
+      }
+    } catch (error) {
+      attempts.push("主窗口 IOUtils: " + shortError(error));
+    }
+
+    throw new Error("没有可用的写文件接口（" + attempts.join("；") + "）");
+  }
+
+  /** 找主窗口（navigator:browser），用于借用它的文件 API。 */
+  function mainChromeWindow() {
+    try {
+      if (!ServicesRef || !ServicesRef.wm) return null;
+      var enumerator = ServicesRef.wm.getEnumerator("navigator:browser");
+      while (enumerator.hasMoreElements()) {
+        var win = enumerator.getNext();
+        if (win && win !== window) return win;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  /**
+   * 建 nsIFile：优先 Components 的 file/local 服务，其次作用域里的 File
+   * 构造器。两者都拿不到就没有文件对象可用。
+   */
+  function newFile(path) {
+    var target = String(path);
+    var parent = target.replace(/[\\/][^\\/]*$/, "");
+    var Cc = resolveGlobal("Cc") || resolveGlobal("Components");
+    var Ci = resolveGlobal("Ci") || resolveGlobal("Components");
+    var file = null;
+    try {
+      if (Cc && Ci) {
+        file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+        file.initWithPath(target);
+      }
+    } catch {
+      file = null;
+    }
+    if (!file) {
+      var FileCtor = resolveGlobal("File");
+      if (FileCtor) file = new FileCtor(target);
+    }
+    if (!file) return null;
+    try {
+      var parentFile = file.parent;
+      if (parentFile && !parentFile.exists()) {
+        parentFile.create(parentFile.DIRECTORY_TYPE, 0o755);
+      }
+    } catch {
+      /* 父目录已存在或无权创建，交给写入环节报错 */
+    }
+    void parent;
+    return file;
+  }
+
+  function newFileOutputStream(path) {
+    var file = newFile(path);
+    var Cc = resolveGlobal("Cc") || resolveGlobal("Components");
+    var Ci = resolveGlobal("Ci") || resolveGlobal("Components");
+    if (!file || !Cc || !Ci) return null;
+    return Cc["@mozilla.org/network/file-output-stream;1"]
+      .createInstance(Ci.nsIFileOutputStream)
+      .init(file, 0x02 | 0x08 | 0x20, 0o644, 0);
+  }
+
+  /** 自动写入路径用：保留旧签名，内部走多策略。 */
   function writeTextFile(path, textValue, append) {
-    var io = ServicesRef && ServicesRef.IOUtils;
-    if (io && io.writeUTF8) {
-      io.writeUTF8(path, textValue, append ? { mode: "append" } : undefined);
-      return "IOUtils";
-    }
-    var internal =
-      ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
-        ? ZoteroRef.Utilities.Internal
-        : null;
-    /* saveFile 只能整体覆盖，追加场景下退化为覆盖 */
-    if (internal && internal.saveFile) {
-      internal.saveFile(textValue, path);
-      return "saveFile";
-    }
-    throw new Error("没有可用的写文件接口");
+    return writeAnyFile(path, textValue, append);
   }
 
   /** 从 chrome://<ref>/content/manager.xhtml 反推插件目录下的诊断文件路径。 */
@@ -1394,6 +1546,12 @@
     if (written) {
       STATE.diagnosticsWritten = true;
     }
+    trace(
+      "autoWrite(" +
+        why +
+        ") -> " +
+        (written ? written.path + " via " + written.how : "失败"),
+    );
     return written;
   }
 
@@ -1441,21 +1599,9 @@
     return joinPath(dir, "termground-diagnostics-latest.txt");
   }
 
+  /** 导出用：与自动写入共用多策略写文件实现。 */
   function saveTextFile(path, textValue) {
-    var io = ServicesRef && ServicesRef.IOUtils;
-    if (io && io.writeUTF8) {
-      io.writeUTF8(path, textValue);
-      return "IOUtils";
-    }
-    var internal =
-      ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
-        ? ZoteroRef.Utilities.Internal
-        : null;
-    if (internal && internal.saveFile) {
-      internal.saveFile(textValue, path);
-      return "saveFile";
-    }
-    throw new Error("没有可用的写文件接口");
+    return writeAnyFile(path, textValue, false);
   }
 
   /**
