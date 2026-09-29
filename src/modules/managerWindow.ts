@@ -111,18 +111,35 @@ let managerWindow: Window | undefined;
 /**
  * Where the window's 「诊断」 button writes its report.
  *
- * Deliberately on disk: the Zotero debug log only lives in the error console
- * in memory, and the clipboard can be unavailable, so both are useless when
- * the interface itself is the thing under investigation.
+ * Deliberately a file: the Zotero debug log only lives in the error console's
+ * memory, and the clipboard can be unavailable, so both are useless when the
+ * interface itself is the thing under investigation.
+ *
+ * The separator is taken from the data directory itself, the same way
+ * termStore builds its paths — Mozilla's file APIs reject a mixed
+ * "C:\...\Zotero" + "/name.txt" pair with NS_ERROR_FILE_UNRECOGNIZED_PATH.
+ * If the directory cannot be determined the key is simply left out of the
+ * window arguments and the window reports that no path was provided.
  */
-function diagnosticsPath(): string | undefined {
+function diagnosticsFileName(): string | undefined {
   try {
-    const PathUtils = ztoolkit.getGlobal("PathUtils");
-    const dir = Zotero.DataDirectory.dir;
-    return PathUtils.join(dir, "termground-manager-diagnostics.txt");
+    const dir = Zotero.DataDirectory?.dir;
+    if (!dir) {
+      Zotero.debug("TermGround: Zotero.DataDirectory.dir is empty");
+      return undefined;
+    }
+    const separator = dir.includes("\\") ? "\\" : "/";
+    const path =
+      dir.replace(/[\\/]+$/, "") +
+      separator +
+      "termground-manager-diagnostics.txt";
+    // Logged at open time so the resolved path is visible even if the in-window
+    // button is never reachable.
+    Zotero.debug("TermGround: manager diagnostics file -> " + path);
+    return path;
   } catch (error) {
     Zotero.debug(
-      "TermGround: diagnostics path unavailable: " +
+      "TermGround: cannot resolve diagnostics path: " +
         ((error as Error).message ?? String(error)),
     );
     return undefined;
@@ -152,7 +169,7 @@ function openManagerWindow(): void {
       api: addon.api.manager,
       zotero: Zotero,
       services: Services,
-      diagnosticsPath: diagnosticsPath(),
+      diagnosticsPath: diagnosticsFileName(),
     },
   ) as Window;
   managerWindow = win;
