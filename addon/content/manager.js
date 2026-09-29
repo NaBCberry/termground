@@ -902,13 +902,21 @@
 
   /* ---------------- 渲染：术语行的人工编辑 ---------------- */
 
-  /** 行内编辑态：中英文两格变成输入框。 */
+  /*
+   * 行内编辑态：中英文两格变成输入框。
+   *
+   * size="1" 不是随手写的：文本输入框默认按 20 字符计算固有宽度，而固有宽度
+   * 会计入表格列的最小内容宽度——两个这样的输入框足以把「英文」「中文」两列
+   * 顶宽，整张表跟着变形。归零固有宽度后，实际宽度完全由单元格加 CSS 的
+   * width:100% 决定。
+   */
   function termEditCells(pair) {
     return [
       el("td", { class: "cell-en" }, [
         el("input", {
           class: "input",
           type: "text",
+          size: "1",
           value: pair.en == null ? "" : String(pair.en),
           "aria-label": "英文术语",
           "data-term-field": "en",
@@ -918,6 +926,7 @@
         el("input", {
           class: "input",
           type: "text",
+          size: "1",
           value: pair.zh == null ? "" : String(pair.zh),
           "aria-label": "中文译名",
           "data-term-field": "zh",
@@ -980,6 +989,7 @@
           el("input", {
             class: "input",
             type: "text",
+            size: "1",
             placeholder: "英文术语",
             "aria-label": "英文术语",
             "data-term-field": "en",
@@ -989,6 +999,7 @@
           el("input", {
             class: "input",
             type: "text",
+            size: "1",
             placeholder: "中文译名",
             "aria-label": "中文译名",
             "data-term-field": "zh",

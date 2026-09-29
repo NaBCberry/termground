@@ -801,6 +801,21 @@ td.evidence {
   color: var(--fg-2);
 }
 
+/*
+ * 行内编辑用到的输入框（术语库表格里的「编辑」/「新建术语」）。
+ *
+ * 与 .btn-compact 同高同字号：只读行里最高的东西是 28px 的按钮，输入框若按
+ * 自己的 padding（8px 12px）撑到 36px，点一下「编辑」整张表格框就被顶高一截。
+ * width/min-width 保证它只跟随单元格，不反过来撑开列宽。
+ */
+td .input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+  min-height: 28px;
+  font-size: 13px;
+}
+
 .expand {
   border: none;
   background: none;
