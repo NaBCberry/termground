@@ -1343,6 +1343,9 @@
 
   function diagnosticsCandidates() {
     var candidates = [];
+    /* 运行根目录优先：自动写的那一份就落在插件旁边 */
+    var auto = autoDiagnosticsPath();
+    if (auto) candidates.push(auto);
     var given = launchArgs.diagnosticsPath;
     if (typeof given === "string" && given) {
       candidates.push(given);
@@ -1358,7 +1361,9 @@
     if (fallback && candidates.indexOf(fallback) < 0) {
       candidates.push(fallback);
     }
-    return candidates;
+    return candidates.filter(function (path, index) {
+      return candidates.indexOf(path) === index;
+    });
   }
 
   function writeDiagnosticsFile(textValue, append) {
@@ -1392,34 +1397,167 @@
     return written;
   }
 
-  function onDiagnostics() {
-    var report = diagnosticsText();
-    try {
-      console.log(report);
-    } catch {
-      /* 忽略 */
-    }
-    var written = writeDiagnosticsFile(
-      "\n===== " + new Date().toISOString() + " (手动) =====\n" + report + "\n",
-      STATE.diagnosticsWritten,
-    );
-    if (written) {
-      STATE.diagnosticsWritten = true;
-    }
+  /* ---------------- 导出诊断 ---------------- */
 
-    if (written) {
-      toast(
-        copyToClipboard(report)
-          ? "诊断已写入 " + written.path + "（并复制到剪贴板）"
-          : "诊断已写入 " + written.path,
-      );
-      return;
-    }
-    toast(
-      copyToClipboard(report)
-        ? "诊断信息已复制到剪贴板"
-        : "诊断没能写入文件：没有可用路径，剪贴板也不可用",
+  /** 补零两位，用于文件名里的日期时间。 */
+  function pad2(value) {
+    return (value < 10 ? "0" : "") + value;
+  }
+
+  /** termground-diagnostics-20260929-1245.txt */
+  function defaultDiagnosticsFileName() {
+    var now = new Date();
+    return (
+      "termground-diagnostics-" +
+      now.getFullYear() +
+      pad2(now.getMonth() + 1) +
+      pad2(now.getDate()) +
+      "-" +
+      pad2(now.getHours()) +
+      pad2(now.getMinutes()) +
+      ".txt"
     );
+  }
+
+  /** 保存对话框与自动写入的默认目录：开窗方给的插件根目录优先。 */
+  function diagnosticsBaseDir() {
+    if (launchArgs.basePath && typeof launchArgs.basePath === "string") {
+      return launchArgs.basePath;
+    }
+    var fromZotero =
+      ZoteroRef && ZoteroRef.DataDirectory ? ZoteroRef.DataDirectory.dir : null;
+    return fromZotero || null;
+  }
+
+  function joinPath(dir, name) {
+    var separator = String(dir).indexOf("\\") >= 0 ? "\\" : "/";
+    return String(dir).replace(/[\\/]+$/, "") + separator + name;
+  }
+
+  /** 每次开窗自动写的那一份：固定文件名，直接落在运行根目录。 */
+  function autoDiagnosticsPath() {
+    var dir = diagnosticsBaseDir();
+    if (!dir) return null;
+    return joinPath(dir, "termground-diagnostics-latest.txt");
+  }
+
+  function saveTextFile(path, textValue) {
+    var io = ServicesRef && ServicesRef.IOUtils;
+    if (io && io.writeUTF8) {
+      io.writeUTF8(path, textValue);
+      return "IOUtils";
+    }
+    var internal =
+      ZoteroRef && ZoteroRef.Utilities && ZoteroRef.Utilities.Internal
+        ? ZoteroRef.Utilities.Internal
+        : null;
+    if (internal && internal.saveFile) {
+      internal.saveFile(textValue, path);
+      return "saveFile";
+    }
+    throw new Error("没有可用的写文件接口");
+  }
+
+  /**
+   * 弹系统保存对话框（Zotero 的 FilePicker 就是 nsIFilePicker）：预填带
+   * 日期时间的文件名，默认目录是插件运行根目录。取消则返回 null。
+   */
+  function pickDiagnosticsFile(defaultName, defaultDir) {
+    var Cc = resolveGlobal("Cc") || resolveGlobal("Components");
+    var Ci = resolveGlobal("Ci") || resolveGlobal("Components");
+    if (!Cc || !Ci) {
+      throw new Error("Cc/Ci 不可用，无法打开保存对话框");
+    }
+    var picker = Cc["@mozilla.org/filepicker;1"].createInstance(
+      Ci.nsIFilePicker,
+    );
+    var filePicker = Ci.nsIFilePicker;
+    /*
+     * Gecko 105+ 用 browsingContext，更老的版本要窗口对象。取不到就退回去，
+     * 别因为父窗口参数把整个导出搞失败。
+     */
+    try {
+      picker.init(
+        window.browsingContext || window,
+        "导出诊断",
+        filePicker.modeSave,
+      );
+    } catch {
+      trace("导出诊断: browsingContext 作为父窗口失败，改用 window");
+      picker.init(window, "导出诊断", filePicker.modeSave);
+    }
+    picker.defaultString = defaultName;
+    picker.defaultExtension = "txt";
+    picker.appendFilter("文本文件", "*.txt");
+    picker.appendFilters(filePicker.filterAll);
+    try {
+      var FileUtils = resolveGlobal("FileUtils");
+      if (defaultDir && FileUtils && FileUtils.File) {
+        picker.displayDirectory = new FileUtils.File(defaultDir);
+      }
+    } catch (error) {
+      trace("导出诊断: 默认目录设置失败 " + shortError(error));
+    }
+    return new Promise(function (resolve) {
+      picker.open(function (result) {
+        if (result === filePicker.returnCancel) {
+          resolve(null);
+          return;
+        }
+        resolve({
+          path: picker.file.path,
+          overwrote: result === filePicker.returnReplace,
+        });
+      });
+    });
+  }
+
+  /** 返回 Promise，调用方（含自动化测试）可以等导出真正结束。 */
+  function onDiagnostics() {
+    var report =
+      "\n===== " +
+      new Date().toISOString() +
+      " (导出) =====\n" +
+      diagnosticsText() +
+      "\n";
+    var filename = defaultDiagnosticsFileName();
+    var dir = diagnosticsBaseDir();
+
+    return pickDiagnosticsFile(filename, dir)
+      .then(function (picked) {
+        if (!picked) {
+          trace("导出诊断: 用户取消");
+          if (copyToClipboard(report)) {
+            toast("已取消导出，诊断信息已复制到剪贴板");
+          } else {
+            toast("已取消导出");
+          }
+          return;
+        }
+        try {
+          var how = saveTextFile(picked.path, report);
+          STATE.diagnosticsWritten = true;
+          trace("导出诊断: 已写入 " + picked.path + "（" + how + "）");
+          toast("诊断已导出到 " + picked.path);
+        } catch (error) {
+          trace("导出诊断: 写入失败 " + shortError(error));
+          toast("导出失败：" + shortError(error));
+        }
+      })
+      .catch(function (error) {
+        trace("导出诊断: 对话框打开失败 " + shortError(error));
+        /* 对话框不可用时退回自动写入，再退到剪贴板 */
+        var written = autoWriteDiagnostics("导出回退");
+        if (written) {
+          toast("对话框不可用，已写入 " + written.path);
+          return;
+        }
+        toast(
+          copyToClipboard(report)
+            ? "对话框不可用，诊断信息已复制到剪贴板"
+            : "导出失败：" + shortError(error),
+        );
+      });
   }
 
   function bindEvents() {
@@ -1511,7 +1649,7 @@
       }
 
       if (target.closest("#diagnostics")) {
-        onDiagnostics();
+        return onDiagnostics();
       }
     });
 

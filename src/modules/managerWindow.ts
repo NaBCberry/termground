@@ -114,25 +114,30 @@ let managerWindow: Window | undefined;
  * Deliberately files: the Zotero debug log only lives in the error console's
  * memory and never reaches `.scaffold/logs/zotero-*.log`, and the clipboard
  * can be unavailable — both are useless when the interface itself is the
- * thing under investigation. Several candidates are returned so the window
- * can fall back if the first one cannot be written.
+ * thing under investigation.
+ *
+ * The window also receives the plugin root so its save dialog opens there and
+ * its automatic writes land next to the running code.
  *
  * Separators are taken from each directory itself, the same way termStore
  * builds its paths: Mozilla's file APIs reject a mixed "C:\...\Zotero" +
  * "/name.txt" pair with NS_ERROR_FILE_UNRECOGNIZED_PATH.
  */
+function joinDir(dir: unknown, name: string): string | null {
+  if (typeof dir !== "string" || !dir) return null;
+  const separator = dir.includes("\\") ? "\\" : "/";
+  return dir.replace(/[\\/]+$/, "") + separator + name;
+}
+
 function diagnosticsFileCandidates(): string[] {
   const name = "termground-manager-diagnostics.txt";
   const out: string[] = [];
-  const push = (dir: unknown) => {
-    if (typeof dir !== "string" || !dir) return;
-    const separator = dir.includes("\\") ? "\\" : "/";
-    const path = dir.replace(/[\\/]+$/, "") + separator + name;
-    if (!out.includes(path)) out.push(path);
+  const push = (path: string | null) => {
+    if (path && !out.includes(path)) out.push(path);
   };
 
   try {
-    push(Zotero.DataDirectory?.dir);
+    push(joinDir(Zotero.DataDirectory?.dir, name));
   } catch (error) {
     Zotero.debug(
       "TermGround: DataDirectory lookup failed: " +
@@ -140,7 +145,7 @@ function diagnosticsFileCandidates(): string[] {
     );
   }
   try {
-    push(Zotero.getMainWindow()?.Zotero?.DataDirectory?.dir);
+    push(joinDir(Zotero.getMainWindow()?.Zotero?.DataDirectory?.dir, name));
   } catch (error) {
     Zotero.debug(
       "TermGround: main-window DataDirectory lookup failed: " +
@@ -150,6 +155,29 @@ function diagnosticsFileCandidates(): string[] {
 
   Zotero.debug("TermGround: manager diagnostics files -> " + out.join(" , "));
   return out;
+}
+
+/** The plugin's running root, so diagnostics can be saved next to the code. */
+function pluginRoot(): string | null {
+  try {
+    const root = ztoolkit.getGlobal("rootURI") as string | undefined;
+    if (!root) return null;
+    const PathUtils = ztoolkit.getGlobal("PathUtils") as
+      | { fromFileURI?: (uri: string) => string }
+      | undefined;
+    if (PathUtils && PathUtils.fromFileURI) {
+      return PathUtils.fromFileURI(root);
+    }
+    /* Fallback: file:///D:/x/y/ -> D:/x/y */
+    const decoded = decodeURIComponent(root.replace(/^file:\/\//, ""));
+    return decoded.replace(/^\/([a-zA-Z]:)/, "$1");
+  } catch (error) {
+    Zotero.debug(
+      "TermGround: cannot resolve plugin root: " +
+        ((error as Error).message ?? String(error)),
+    );
+    return null;
+  }
 }
 
 function openManagerWindow(): void {
@@ -176,6 +204,7 @@ function openManagerWindow(): void {
       zotero: Zotero,
       services: Services,
       diagnosticsPath: diagnosticsFileCandidates(),
+      diagnosticsBasePath: pluginRoot(),
     },
   ) as Window;
   managerWindow = win;
