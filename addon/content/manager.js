@@ -89,22 +89,79 @@
 
   var api = resolveApi();
 
-  /* ---------------- 诊断 ---------------- */
+  /* ---------------- 日志与诊断 ---------------- */
   var DIAG = [];
 
-  /** 记一行诊断：进 Zotero 调试日志，同时留给页脚「诊断」按钮复制。 */
+  /**
+   * 官方日志通道：Zotero.debug -> Zotero.Debug.log，落到「帮助 -> 输出日志
+   * 排错」的输出缓冲区/文本控制台（zotero.js 里 debug() 就是调 Debug.log）。
+   * 它受 debug.log / debug.store / debug.level 约束，所以这里只当作"顺手记
+   * 一笔"，界面诊断不依赖它。控制台通道是 Zotero.log / Zotero.logError，
+   * 也不能替代——两者都不落成 .scaffold/logs 那种 .log 文件。
+   */
+  function logLine(message) {
+    var prefixed = "TermGround[manager] " + message;
+    try {
+      if (ZoteroRef && ZoteroRef.debug) {
+        ZoteroRef.debug(prefixed);
+      } else if (typeof Zotero !== "undefined" && Zotero && Zotero.debug) {
+        Zotero.debug(prefixed);
+      }
+    } catch {
+      /* 日志通道不可用不影响界面 */
+    }
+    try {
+      if (ZoteroRef && ZoteroRef.Debug && ZoteroRef.Debug.log) {
+        ZoteroRef.Debug.log(prefixed);
+      }
+    } catch {
+      /* Zotero.Debug 可能尚未初始化 */
+    }
+  }
+
+  /** 记一行诊断：进官方日志，同时留给「诊断」按钮与诊断文件。 */
   function trace(message) {
     DIAG.push(message);
     if (DIAG.length > 300) {
       DIAG.shift();
     }
-    try {
-      if (ZoteroRef && ZoteroRef.debug) {
-        ZoteroRef.debug("TermGround[manager] " + message);
-      }
-    } catch {
-      /* 调试日志本身失败不影响界面 */
-    }
+    logLine(message);
+  }
+
+  /**
+   * 日志通道自检：只走官方 API（Zotero.debug / Zotero.Debug.log），避免用
+   * console 这类没保证的全局。写完就可以在「输出日志排错」里直接看到结论。
+   */
+  function probeEnvironment() {
+    var parts = [];
+    parts.push("api=" + !!api);
+    parts.push("hasZotero=" + !!ZoteroRef);
+    parts.push("hasZoteroDebug=" + !!(ZoteroRef && ZoteroRef.debug));
+    parts.push(
+      "hasDebugLogger=" +
+        !!(ZoteroRef && ZoteroRef.Debug && ZoteroRef.Debug.log),
+    );
+    parts.push("hasServices=" + !!ServicesRef);
+    parts.push(
+      "hasIOUtils=" +
+        !!(ServicesRef && ServicesRef.IOUtils && ServicesRef.IOUtils.writeUTF8),
+    );
+    parts.push(
+      "hasSaveFile=" +
+        !!(
+          ZoteroRef &&
+          ZoteroRef.Utilities &&
+          ZoteroRef.Utilities.Internal &&
+          ZoteroRef.Utilities.Internal.saveFile
+        ),
+    );
+    parts.push("windowArgs=" + launchArgsProbe);
+    parts.push("candidates=" + diagnosticsCandidates().join(" | "));
+    parts.push("styleSheets=" + document.styleSheets.length);
+    parts.push("contentType=" + document.contentType);
+    var summary = parts.join(" ");
+    trace("probe -> " + summary);
+    return summary;
   }
 
   function errorName(error) {
@@ -1583,6 +1640,7 @@
     trace(
       "boot: diagnostics candidates -> " + diagnosticsCandidates().join(" , "),
     );
+    probeEnvironment();
 
     /* 开窗即自动写一份：这份文件不依赖点按钮，界面坏了也留得下线索 */
     autoWriteDiagnostics("boot");
